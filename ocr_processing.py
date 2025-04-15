@@ -10,6 +10,7 @@ from typing import Literal, Dict, Any, Optional, Tuple, List
 from mistralai import Mistral
 from mistralai.models import OCRResponse
 from dotenv import load_dotenv
+import re
 
 # Register HEIF opener
 pillow_heif.register_heif_opener()
@@ -289,7 +290,7 @@ class DocumentOCR:
             print(f"Error processing document: {str(e)}")
             return None, None, None
     
-    def download_ocr_result(self, ocr_result: str, file_format: str) -> str:
+    def download_ocr_result(self, ocr_result: str, file_format: str) -> Tuple[str, List[Tuple[str, str]]]:
         """Generate a downloadable file from the OCR result.
         
         Args:
@@ -297,13 +298,33 @@ class DocumentOCR:
             file_format: The desired output format ("txt" or "md")
             
         Returns:
-            Path to the generated file
+            Tuple containing:
+            - Path to the generated text file
+            - List of tuples containing (image filename, base64 data)
         """
+        # Extract and replace images with placeholders
+        import re
+        image_counter = 0
+        extracted_images = []
+        
+        # Function to replace image with placeholder
+        def replace_image(match):
+            nonlocal image_counter
+            image_counter += 1
+            placeholder = f"img-{image_counter}.jpeg"
+            extracted_images.append((placeholder, match.group(0)))
+            return placeholder
+        
+        # Replace markdown image syntax ![alt](url)
+        text_with_placeholders = re.sub(r'!\[.*?\]\((data:image/[^;]+;base64,[^\s]+)\)', replace_image, ocr_result)
+        # Clean up any extra newlines that might have been left
+        text_with_placeholders = re.sub(r'\n\s*\n', '\n\n', text_with_placeholders).strip()
+        
         # Create a temporary file with the appropriate extension
         temp_path = os.path.join(self.temp_dir, f"ocr_result_{os.urandom(8).hex()}.{file_format}")
         
         # Write the result to the file
         with open(temp_path, 'w', encoding='utf-8') as f:
-            f.write(ocr_result)
+            f.write(text_with_placeholders)
             
-        return temp_path 
+        return temp_path, extracted_images 

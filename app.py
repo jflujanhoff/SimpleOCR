@@ -2,6 +2,7 @@ import gradio as gr
 from ocr_processing import DocumentOCR
 import os
 from dotenv import load_dotenv
+import base64
 
 # Load environment variables
 load_dotenv()
@@ -33,10 +34,21 @@ def process_document(file, ocr_engine):
             return None, "Error: Could not extract text from the document. Please try again with a different file or OCR engine.", None
         
         # Generate downloadable files
-        txt_path = ocr_processor.download_ocr_result(result_text, "txt")
-        md_path = ocr_processor.download_ocr_result(result_text, "md")
+        txt_path, txt_images = ocr_processor.download_ocr_result(result_text, "txt")
+        md_path, md_images = ocr_processor.download_ocr_result(result_text, "md")
         
-        return image_paths, result_text, [txt_path, md_path]
+        # Save images to temporary files
+        image_files = []
+        for img_name, base64_data in txt_images:
+            # Extract base64 data
+            img_data = base64.b64decode(base64_data.split(',')[1])
+            # Create temporary file
+            img_path = os.path.join(ocr_processor.temp_dir, img_name)
+            with open(img_path, 'wb') as f:
+                f.write(img_data)
+            image_files.append(img_path)
+        
+        return image_paths, result_text, [txt_path, md_path] + image_files
     except Exception as e:
         error_msg = f"Error processing document: {str(e)}"
         print(error_msg)
@@ -61,6 +73,7 @@ with gr.Blocks(theme='allenai/gradio-theme') as demo:
         with gr.Column():
             md_output = gr.Markdown(label="Extracted Text", show_label=True, container=True)
             download_output = gr.File(label="Download Results")
+            gr.Markdown("Download the extracted text and images. Images are numbered as img-1.jpeg, img-2.jpeg, etc.")
     
     process_btn.click(
         fn=process_document,
@@ -69,4 +82,5 @@ with gr.Blocks(theme='allenai/gradio-theme') as demo:
     )
 
 if __name__ == "__main__":
-    demo.launch(auth=(USERNAME, PASSWORD)) 
+    demo.launch(auth=(USERNAME, PASSWORD), share=True) 
+    # demo.launch() 
