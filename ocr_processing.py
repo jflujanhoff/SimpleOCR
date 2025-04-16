@@ -4,7 +4,7 @@ import base64
 from typing import Literal, Optional, Tuple, List
 from PIL import Image
 import io
-from ocr_models import TesseractOCR, MistralOCR
+from ocr_models import TesseractOCR, MistralOCR, OpenAICR
 import logging
 import pillow_heif
 
@@ -31,6 +31,13 @@ class DocumentOCR:
             logger.warning(f"Warning: {str(e)}")
             logger.warning("Mistral OCR will not be available. Only Tesseract OCR will work.")
             self.mistral = None
+            
+        try:
+            self.openai = OpenAICR(self.temp_dir)
+        except ValueError as e:
+            logger.warning(f"Warning: {str(e)}")
+            logger.warning("OpenAI OCR will not be available. Make sure OPENAI_API_KEY is set in your environment.")
+            self.openai = None
     
     def __del__(self):
         """Cleanup temporary directory when the object is destroyed."""
@@ -40,7 +47,7 @@ class DocumentOCR:
         except:
             pass
     
-    def _process_pdf_document(self, file_content: bytes, file_name: str, ocr_engine: Literal["Tesseract", "Mistral"]) -> Tuple[str, List[str], str]:
+    def _process_pdf_document(self, file_content: bytes, file_name: str, ocr_engine: Literal["Tesseract", "Mistral", "OpenAI"]) -> Tuple[str, List[str], str]:
         """Process a PDF document using the specified OCR engine."""
         # Create temporary PDF file
         tmp_path = os.path.join(self.temp_dir, f"temp_{os.urandom(8).hex()}.pdf")
@@ -51,10 +58,33 @@ class DocumentOCR:
             # Process PDF based on selected engine
             if ocr_engine == "Tesseract":
                 image_paths, result_text = self.tesseract.process_pdf(tmp_path)
-            else:  # Mistral
+            elif ocr_engine == "Mistral":
                 if self.mistral is None:
                     raise ValueError("Mistral OCR is not available")
                 image_paths, result_text = self.mistral.process_pdf(tmp_path)
+                
+                # If Mistral returned empty image paths but has valid text, generate a preview
+                if not image_paths and result_text and not result_text.startswith("Error:"):
+                    # Create a simple preview using PyMuPDF for display
+                    import fitz
+                    try:
+                        doc = fitz.open(tmp_path)
+                        image_paths = []
+                        for i, page in enumerate(doc, 1):
+                            try:
+                                pix = page.get_pixmap()
+                                preview_path = os.path.join(self.temp_dir, f"page_{i}.png")
+                                pix.save(preview_path)
+                                image_paths.append(preview_path)
+                            except Exception as e:
+                                logger.warning(f"Failed to render preview for page {i}: {str(e)}")
+                        doc.close()
+                    except Exception as e:
+                        logger.warning(f"Failed to generate PDF previews: {str(e)}")
+            else:  # OpenAI
+                if self.openai is None:
+                    raise ValueError("OpenAI OCR is not available")
+                image_paths, result_text = self.openai.process_pdf(tmp_path)
             
             return file_name, image_paths, result_text
             
@@ -64,7 +94,7 @@ class DocumentOCR:
             except:
                 pass
     
-    def _process_image_document(self, file_content: bytes, file_name: str, ocr_engine: Literal["Tesseract", "Mistral"]) -> Tuple[str, List[str], str]:
+    def _process_image_document(self, file_content: bytes, file_name: str, ocr_engine: Literal["Tesseract", "Mistral", "OpenAI"]) -> Tuple[str, List[str], str]:
         """Process an image document using the specified OCR engine."""
         try:
             # Validate file content
@@ -93,16 +123,19 @@ class DocumentOCR:
             try:
                 # Process image based on selected engine
                 if ocr_engine == "Tesseract":
-                    result_text = self.tesseract.process_image(image)
-                else:  # Mistral
+                    image_paths, result_text = self.tesseract.process_image(image)
+                    return file_name, image_paths, result_text
+                elif ocr_engine == "Mistral":
                     if self.mistral is None:
                         raise ValueError("Mistral OCR is not available")
-                    result_text = self.mistral.process_image(image)
-                
-                if not result_text:
-                    logger.warning(f"No text could be extracted from image: {file_name}")
-                
-                return file_name, [image_path], result_text
+                    empty_images, result_text = self.mistral.process_image(image)
+                    # We'll use the saved image for preview regardless
+                    return file_name, [image_path], result_text
+                else:  # OpenAI
+                    if self.openai is None:
+                        raise ValueError("OpenAI OCR is not available")
+                    image_paths, result_text = self.openai.process_image(image)
+                    return file_name, image_paths, result_text
                 
             except Exception as e:
                 logger.error(f"OCR processing failed for {file_name}: {str(e)}")
@@ -116,7 +149,7 @@ class DocumentOCR:
                 pass
             raise e
     
-    def process_document(self, file, ocr_engine: Literal["Tesseract", "Mistral"]) -> Tuple[Optional[str], Optional[List[str]], Optional[str]]:
+    def process_document(self, file, ocr_engine: Literal["Tesseract", "Mistral", "OpenAI"]) -> Tuple[Optional[str], Optional[List[str]], Optional[str]]:
         """Process a document using the specified OCR engine."""
         try:
             # For Gradio file objects, we need to access the file path directly

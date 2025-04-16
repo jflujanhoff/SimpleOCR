@@ -3,6 +3,7 @@ from PIL import Image
 import fitz  # PyMuPDF
 import tempfile
 import os
+import re
 from typing import Tuple, List
 from .base import BaseOCR
 
@@ -17,8 +18,52 @@ class TesseractOCR(BaseOCR):
         """
         self.temp_dir = temp_dir
     
-    def process_image(self, image: Image.Image) -> str:
-        """Process a single image using Tesseract OCR."""
+    def _format_as_markdown(self, text: str) -> str:
+        """Format plain text as markdown.
+        
+        Args:
+            text: Plain text from Tesseract OCR
+            
+        Returns:
+            Formatted markdown text
+        """
+        if not text:
+            return ""
+            
+        # Clean the text
+        text = text.strip()
+        
+        # Split text into lines
+        lines = text.split('\n')
+        formatted_lines = []
+        
+        for i, line in enumerate(lines):
+            # Skip empty lines
+            if not line.strip():
+                formatted_lines.append("")
+                continue
+                
+            # Check if line might be a heading (short line, less than 60 chars)
+            if len(line.strip()) < 60 and i > 0 and not lines[i-1].strip():
+                # Check if line is all caps or starts with a number
+                if line.strip().isupper() or re.match(r'^\d+\.', line.strip()):
+                    formatted_lines.append(f"### {line.strip()}")
+                    continue
+            
+            # Regular text
+            formatted_lines.append(line)
+        
+        # Join lines back together
+        return "\n".join(formatted_lines)
+    
+    def process_image(self, image: Image.Image) -> Tuple[List[str], str]:
+        """Process a single image using Tesseract OCR.
+        
+        Returns:
+            Tuple containing:
+            - List with path to the processed image
+            - Extracted text from the image as markdown
+        """
         # Convert image to RGB if it's not already
         if image.mode != 'RGB':
             image = image.convert('RGB')
@@ -30,7 +75,15 @@ class TesseractOCR(BaseOCR):
         try:
             # Process the saved PNG file
             text = pytesseract.image_to_string(temp_path)
-            return text
+            
+            # Format as markdown
+            markdown_text = self._format_as_markdown(text)
+            
+            # Create a display image path
+            display_path = os.path.join(self.temp_dir, f"image_{os.urandom(8).hex()}.png")
+            image.save(display_path, format='PNG')
+            
+            return [display_path], markdown_text
         finally:
             # Clean up the temporary file
             try:
@@ -62,7 +115,7 @@ class TesseractOCR(BaseOCR):
             image_paths.append(img_path)
             
             # Process image with OCR
-            text = self.process_image(img)
-            all_text.append(f"Page {i}:\n{text}")
+            _, text = self.process_image(img)
+            all_text.append(f"## Page {i}\n\n{text}")
         
         return image_paths, "\n\n".join(all_text) 

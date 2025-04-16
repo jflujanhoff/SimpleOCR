@@ -6,14 +6,16 @@ class BaseOCR(ABC):
     """Base class for OCR models that defines the common interface."""
     
     @abstractmethod
-    def process_image(self, image: Image.Image) -> str:
+    def process_image(self, image: Image.Image) -> Tuple[List[str], str]:
         """Process a single image and return the extracted text.
         
         Args:
             image: PIL Image object to process
             
         Returns:
-            Extracted text from the image
+            Tuple containing:
+            - List of image paths (may be empty for some OCR implementations)
+            - Extracted text from the image
         """
         pass
     
@@ -26,7 +28,7 @@ class BaseOCR(ABC):
             
         Returns:
             Tuple containing:
-            - List of image paths
+            - List of image paths (may be empty for some OCR implementations)
             - Extracted text from the PDF
         """
         pass 
