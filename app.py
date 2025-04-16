@@ -82,5 +82,5 @@ with gr.Blocks(theme='allenai/gradio-theme') as demo:
     )
 
 if __name__ == "__main__":
-    demo.launch(auth=(USERNAME, PASSWORD), share=True) 
-    # demo.launch() 
+    # demo.launch(auth=(USERNAME, PASSWORD), share=True) 
+    demo.launch() 
