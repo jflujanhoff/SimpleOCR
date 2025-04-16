@@ -217,37 +217,37 @@ with gr.Blocks(theme='allenai/gradio-theme') as demo:
             gr.Markdown("Enter your API keys for Mistral and OpenAI to enable their OCR engines. Keys are securely stored in memory only for the current session.")
             gr.Markdown("⚠️ **Security Note**: API keys are stored in memory and are not persisted when the server restarts.")
             
-            with gr.Column():
-                mistral_key = gr.Textbox(
-                    label="Mistral API Key",
-                    placeholder="Enter your Mistral API key...",
-                    type="password",
-                    value=""  # Don't display key values
-                )
-                with gr.Row():
-                    mistral_status = gr.Textbox(label="Status", interactive=False)
-                    with gr.Column():  
+            with gr.Accordion("Mistral API Key", open=False):
+                mistral_status = gr.Markdown(label="Status", value="")
+                with gr.Column():
+                    mistral_key = gr.Textbox(
+                        label="Mistral API Key",
+                        placeholder="Enter your Mistral API key...",
+                        type="password",
+                        value=""  # Don't display key values
+                    )
+                    with gr.Row():
                         mistral_save_btn = gr.Button("Save Mistral API Key", variant="primary")
                         mistral_clear_btn = gr.Button("Clear Key", variant="stop")
                 
-            with gr.Column():
-                openai_key = gr.Textbox(
-                    label="OpenAI API Key",
-                    placeholder="Enter your OpenAI API key...",
-                    type="password",
-                    value=""  # Don't display key values
-                )
-                with gr.Row():
-                    openai_status = gr.Textbox(label="Status", interactive=False)
-                    with gr.Column():  
+            with gr.Accordion("OpenAI API Key", open=False):
+                openai_status = gr.Markdown(label="Status", value="")
+                with gr.Column():
+                    openai_key = gr.Textbox(
+                        label="OpenAI API Key",
+                        placeholder="Enter your OpenAI API key...",
+                        type="password",
+                        value=""  # Don't display key values
+                    )
+                    with gr.Row():
                         openai_save_btn = gr.Button("Save OpenAI API Key", variant="primary")
                         openai_clear_btn = gr.Button("Clear Key", variant="stop")
             
             gr.Markdown("### Available OCR Engines")
             gr.Markdown("The following OCR engines are currently available:")
-            available_engines_text = gr.Markdown(f"- Tesseract (always available)\n" + 
-                                                 f"- Mistral {'(available)' if 'Mistral' in available_engines else '(not available)'}\n" +
-                                                 f"- OpenAI {'(available)' if 'OpenAI' in available_engines else '(not available)'}")
+            available_engines_text = gr.Markdown(f"- Tesseract (✅ always available)\n" + 
+                                                 f"- Mistral {'(✅ available)' if 'Mistral' in available_engines else '(❌ not available)'}\n" +
+                                                 f"- OpenAI {'(✅ available)' if 'OpenAI' in available_engines else '(❌ not available)'}")
     
     # Set up event handlers
     process_btn.click(
@@ -262,7 +262,7 @@ with gr.Blocks(theme='allenai/gradio-theme') as demo:
         inputs=[mistral_key, gr.Text(value="Mistral", visible=False)],
         outputs=[mistral_status]
     ).then(
-        fn=lambda: f"- Tesseract (always available)\n- Mistral {'(available)' if 'Mistral' in available_engines else '(not available)'}\n- OpenAI {'(available)' if 'OpenAI' in available_engines else '(not available)'}",
+        fn=lambda: f"- Tesseract (✅ always available)\n- Mistral {'(✅ available)' if 'Mistral' in available_engines else '(❌ not available)'}\n- OpenAI {'(✅ available)' if 'OpenAI' in available_engines else '(❌ not available)'}",
         outputs=[available_engines_text]
     ).then(
         fn=lambda: gr.Radio(choices=available_engines, value=available_engines[0], label="OCR Engine", interactive=True),
@@ -277,7 +277,7 @@ with gr.Blocks(theme='allenai/gradio-theme') as demo:
         inputs=[gr.Text(value="Mistral", visible=False)],
         outputs=[mistral_status]
     ).then(
-        fn=lambda: f"- Tesseract (always available)\n- Mistral {'(available)' if 'Mistral' in available_engines else '(not available)'}\n- OpenAI {'(available)' if 'OpenAI' in available_engines else '(not available)'}",
+        fn=lambda: f"- Tesseract (✅ always available)\n- Mistral {'(✅ available)' if 'Mistral' in available_engines else '(❌ not available)'}\n- OpenAI {'(✅ available)' if 'OpenAI' in available_engines else '(❌ not available)'}", 
         outputs=[available_engines_text]
     ).then(
         fn=lambda: gr.Radio(choices=available_engines, value=available_engines[0], label="OCR Engine", interactive=True),
@@ -292,7 +292,7 @@ with gr.Blocks(theme='allenai/gradio-theme') as demo:
         inputs=[openai_key, gr.Text(value="OpenAI", visible=False)],
         outputs=[openai_status]
     ).then(
-        fn=lambda: f"- Tesseract (always available)\n- Mistral {'(available)' if 'Mistral' in available_engines else '(not available)'}\n- OpenAI {'(available)' if 'OpenAI' in available_engines else '(not available)'}",
+        fn=lambda: f"- Tesseract (✅ always available)\n- Mistral {'(✅ available)' if 'Mistral' in available_engines else '(❌ not available)'}\n- OpenAI {'(✅ available)' if 'OpenAI' in available_engines else '(❌ not available)'}",
         outputs=[available_engines_text]
     ).then(
         fn=lambda: gr.Radio(choices=available_engines, value=available_engines[0], label="OCR Engine", interactive=True),
@@ -307,7 +307,7 @@ with gr.Blocks(theme='allenai/gradio-theme') as demo:
         inputs=[gr.Text(value="OpenAI", visible=False)],
         outputs=[openai_status]
     ).then(
-        fn=lambda: f"- Tesseract (always available)\n- Mistral {'(available)' if 'Mistral' in available_engines else '(not available)'}\n- OpenAI {'(available)' if 'OpenAI' in available_engines else '(not available)'}",
+        fn=lambda: f"- Tesseract (✅ always available)\n- Mistral {'(✅ available)' if 'Mistral' in available_engines else '(❌ not available)'}\n- OpenAI {'(✅ available)' if 'OpenAI' in available_engines else '(❌ not available)'}",
         outputs=[available_engines_text]
     ).then(
         fn=lambda: gr.Radio(choices=available_engines, value=available_engines[0], label="OCR Engine", interactive=True),
@@ -321,6 +321,7 @@ if __name__ == "__main__":
     # Enable secure server with authentication if credentials are provided
     if USERNAME and PASSWORD:
         demo.launch(auth=(USERNAME, PASSWORD), share=True, ssl_verify=True)
+        # demo.launch(share=True, ssl_verify=True)
     else:
         # Default launch without authentication 
         demo.launch(ssl_verify=True) 
