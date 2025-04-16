@@ -25,19 +25,31 @@ class DocumentOCR:
         
         # Initialize OCR models
         self.tesseract = TesseractOCR(self.temp_dir)
-        try:
-            self.mistral = MistralOCR(self.temp_dir)
-        except ValueError as e:
-            logger.warning(f"Warning: {str(e)}")
-            logger.warning("Mistral OCR will not be available. Only Tesseract OCR will work.")
-            self.mistral = None
+        self.mistral = None
+        self.openai = None
+        
+        # Only try to initialize API-based models if environment variables are set
+        if os.getenv('MISTRAL_API_KEY'):
+            try:
+                self.mistral = MistralOCR(self.temp_dir)
+                logger.info("Mistral OCR initialized successfully")
+            except ValueError as e:
+                logger.warning(f"Warning: {str(e)}")
+                logger.warning("Mistral OCR will not be available. Only Tesseract OCR will work.")
+                self.mistral = None
+        else:
+            logger.info("Mistral OCR not initialized - no API key provided")
             
-        try:
-            self.openai = OpenAICR(self.temp_dir)
-        except ValueError as e:
-            logger.warning(f"Warning: {str(e)}")
-            logger.warning("OpenAI OCR will not be available. Make sure OPENAI_API_KEY is set in your environment.")
-            self.openai = None
+        if os.getenv('OPENAI_API_KEY'):
+            try:
+                self.openai = OpenAICR(self.temp_dir)
+                logger.info("OpenAI OCR initialized successfully")
+            except ValueError as e:
+                logger.warning(f"Warning: {str(e)}")
+                logger.warning("OpenAI OCR will not be available. Make sure OPENAI_API_KEY is valid.")
+                self.openai = None
+        else:
+            logger.info("OpenAI OCR not initialized - no API key provided")
     
     def __del__(self):
         """Cleanup temporary directory when the object is destroyed."""

@@ -19,11 +19,18 @@ class OpenAICR(BaseOCR):
             temp_dir: Directory for temporary file storage
         """
         self.temp_dir = temp_dir
-        self.client = openai.OpenAI()
         
         # Verify API key is set
-        if not os.getenv("OPENAI_API_KEY"):
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
             raise ValueError("OPENAI_API_KEY environment variable is not set")
+            
+        # Only initialize client if we have a key
+        try:
+            self.client = openai.OpenAI(api_key=api_key)
+        except Exception as e:
+            logger.error(f"Failed to initialize OpenAI client: {str(e)}")
+            raise ValueError(f"Failed to initialize OpenAI client: {str(e)}")
     
     def _image_to_base64(self, image: Image.Image) -> str:
         """Convert PIL Image to base64 string.

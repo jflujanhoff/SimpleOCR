@@ -7,7 +7,11 @@ from mistralai.models import OCRResponse
 from .base import BaseOCR
 from dotenv import load_dotenv
 import fitz  # PyMuPDF
+import logging
 
+logger = logging.getLogger(__name__)
+
+# Load environment variables
 load_dotenv()
 
 class MistralOCR(BaseOCR):
@@ -22,11 +26,21 @@ class MistralOCR(BaseOCR):
         """
         self.temp_dir = temp_dir
         self.debug_mode = debug_mode
+        
+        # Get API key and validate
         self.mistral_api_key = os.getenv('MISTRAL_API_KEY')
         if not self.mistral_api_key:
             raise ValueError("MISTRAL_API_KEY environment variable is not set")
         
-        self.mistral_client = Mistral(api_key=self.mistral_api_key)
+        # Only initialize client if we have a key
+        try:
+            self.mistral_client = Mistral(api_key=self.mistral_api_key)
+            self._debug_log("Mistral client initialized successfully")
+        except Exception as e:
+            error_msg = f"Failed to initialize Mistral client: {str(e)}"
+            logger.error(error_msg)
+            self._debug_log(error_msg)
+            raise ValueError(error_msg)
     
     def _debug_log(self, message: str):
         """Log a debug message if debug mode is enabled."""
