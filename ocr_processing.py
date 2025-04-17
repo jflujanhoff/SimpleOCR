@@ -32,53 +32,79 @@ class DocumentOCR:
     """A class for performing OCR on documents using different OCR engines."""
     
     def __init__(self):
-        """Initialize the DocumentOCR class with necessary configurations."""
+        """Initialize the DocumentOCR class with base configurations and non-API engines."""
         # Create a temporary directory for storing images
         self.temp_dir = tempfile.mkdtemp()
-        
-        # Initialize OCR models
-        self.tesseract = TesseractOCR(self.temp_dir)
+        logger.info(f"Created temporary directory: {self.temp_dir}")
+
+        # Initialize attributes
+        self.tesseract = None
         self.mistral = None
         self.openai = None
-        self.available_openai_models: List[str] = [] # Store available models
-        self.easyocr = None # Add easyocr attribute
+        self.available_openai_models: List[str] = []
+        self.easyocr = None
         self.output_dir = "output_files"
         os.makedirs(self.output_dir, exist_ok=True)
+
         # Add logger initialization confirmation for python-docx
         if not PYTHON_DOCX_AVAILABLE:
              logger.warning("python-docx not installed. .doc file creation will be disabled.")
 
-        # Initialize EasyOCR - doesn't require API keys
+        # Always initialize Tesseract (assuming it doesn't fail catastrophically)
+        try:
+            self.tesseract = TesseractOCR(self.temp_dir)
+            logger.info("Tesseract initialized successfully.")
+        except Exception as e:
+             logger.error(f"CRITICAL: Failed to initialize Tesseract: {e}", exc_info=True)
+             # Optionally raise an error or handle the fact that Tesseract is core
+
+        # Initialize EasyOCR (doesn't require API keys)
+        self._initialize_easyocr()
+
+        # Initialize API-dependent engines (will check env vars set during this init)
+        self.reinitialize_api_engines()
+
+    def _initialize_easyocr(self):
+        """Initializes the EasyOCR engine."""
         try:
             # You might configure languages here if needed, e.g., languages=['en', 'es']
-            self.easyocr = EasyOCROCR(self.temp_dir) 
+            self.easyocr = EasyOCROCR(self.temp_dir)
             logger.info("EasyOCR initialized successfully")
-        except Exception as e: # Catching a broad exception as EasyOCR init can fail for various reasons
-            logger.warning(f"Warning: Failed to initialize EasyOCR: {str(e)}")
+        except ImportError:
+            logger.warning("EasyOCR library not found. Please install it (`pip install easyocr`). EasyOCR will not be available.")
+            self.easyocr = None
+        except Exception as e: # Catching other potential exceptions
+            logger.warning(f"Warning: Failed to initialize EasyOCR: {str(e)}", exc_info=True)
             logger.warning("EasyOCR will not be available.")
             self.easyocr = None
-        
-        # Initialize Mistral if key is present
+
+    def _initialize_mistral(self):
+        """Initializes the Mistral OCR engine if the API key is available."""
         mistral_api_key = os.getenv('MISTRAL_API_KEY')
         if mistral_api_key:
             try:
-                # Pass key explicitly or ensure MistralOCR reads it
-                self.mistral = MistralOCR(self.temp_dir)
+                # Pass key explicitly or ensure MistralOCR reads it from env
+                self.mistral = MistralOCR(self.temp_dir) # Assumes MistralOCR uses os.getenv internally if no key passed
                 logger.info("Mistral OCR initialized successfully")
-            except ValueError as e: # Catch initialization errors
+            except ImportError:
+                 logger.warning("MistralAI library not found. Please install it (`pip install mistralai`). Mistral OCR will not be available.")
+                 self.mistral = None
+            except ValueError as e: # Catch specific client init errors (like bad key format?)
                 logger.warning(f"Mistral OCR Initialization Warning: {str(e)}. Engine will not be available.")
                 self.mistral = None
-            except Exception as e:
+            except Exception as e: # Catch other potential errors (network, etc.)
                 logger.error(f"Unexpected error initializing Mistral OCR: {str(e)}", exc_info=True)
                 self.mistral = None
         else:
-            logger.info("Mistral OCR not initialized - no API key provided")
-            
-        # Initialize OpenAI if key is present and fetch models
+            logger.info("Mistral OCR not initialized - no API key provided in environment")
+            self.mistral = None # Ensure it's None if no key
+
+    def _initialize_openai(self):
+        """Initializes the OpenAI OCR engine if the API key is available and fetches models."""
         openai_api_key = os.getenv('OPENAI_API_KEY')
         if openai_api_key:
             try:
-                self.openai = OpenAICR(self.temp_dir) # OpenAICR now raises ValueError if key invalid/client fails
+                self.openai = OpenAICR(self.temp_dir) # Assumes OpenAICR uses os.getenv internally if no key passed
                 logger.info("OpenAI OCR initialized successfully")
                 # Fetch available vision models using the initialized client
                 try:
@@ -100,25 +126,40 @@ class DocumentOCR:
                      logger.warning(f"Could not fetch OpenAI models: {str(model_e)}. Using default: ['gpt-4o']")
                      self.available_openai_models = ['gpt-4o'] # Use default if model listing fails
 
-            except ValueError as e: # Catch init errors from OpenAICR
+            except ImportError:
+                logger.warning("OpenAI library not found. Please install it (`pip install openai`). OpenAI OCR will not be available.")
+                self.openai = None
+                self.available_openai_models = []
+            except ValueError as e: # Catch specific client init errors (like bad key format?)
                 logger.warning(f"OpenAI OCR Initialization Warning: {str(e)}. Engine will not be available.")
                 self.openai = None
                 self.available_openai_models = []
-            except Exception as e:
+            except Exception as e: # Catch other potential errors
                 logger.error(f"Unexpected error initializing OpenAI OCR: {str(e)}", exc_info=True)
                 self.openai = None
                 self.available_openai_models = []
         else:
-            logger.info("OpenAI OCR not initialized - no API key provided")
+            logger.info("OpenAI OCR not initialized - no API key provided in environment")
+            self.openai = None # Ensure it's None if no key
             self.available_openai_models = []
-    
+
+    def reinitialize_api_engines(self):
+        """Re-initializes engines that depend on API keys (Mistral, OpenAI)."""
+        logger.info("Re-initializing API-dependent OCR engines...")
+        self._initialize_mistral()
+        self._initialize_openai()
+        logger.info("Finished re-initializing API engines.")
+
     def __del__(self):
         """Cleanup temporary directory when the object is destroyed."""
         try:
-            import shutil
-            shutil.rmtree(self.temp_dir, ignore_errors=True)
-        except:
-            pass
+            if hasattr(self, 'temp_dir') and Path(self.temp_dir).exists():
+                logger.info(f"Cleaning up temporary directory: {self.temp_dir}")
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
+        except Exception as e:
+            # Log error during cleanup but don't prevent program exit
+            logger.error(f"Error during DocumentOCR cleanup: {e}", exc_info=True)
+            pass # Keep pass as __del__ should not raise exceptions
     
     def _process_pdf_document(self, file_content: bytes, file_name: str, ocr_engine: OCR_ENGINE_TYPE, openai_model: str | None = None) -> Tuple[str, List[str], str]:
         """Process a PDF document using the specified OCR engine."""
@@ -246,6 +287,7 @@ class DocumentOCR:
                     else:
                          raise ValueError("Tesseract OCR is not available")
                  elif ocr_engine == "Mistral":
+                    logger.info(f"Checking Mistral engine availability inside _process_image_document. self.mistral = {self.mistral}")
                     if self.mistral:
                         # Mistral uses PIL Image
                         _, result_text = self.mistral.process_image(image)
