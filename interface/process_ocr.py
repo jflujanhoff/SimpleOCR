@@ -7,6 +7,9 @@ from pathlib import Path
 import logging
 from docx import Document # Assuming python-docx is installed or added to requirements
 
+# Import MAX_FILES
+from variables import MAX_FILES
+
 logger = logging.getLogger(__name__)
 
 # --- Helper function to clear output directory --- # TODO: Pass ocr_processor.output_dir
@@ -43,20 +46,10 @@ def process_document(files, ocr_engine, selected_openai_model, current_results_s
     """Process a list of documents, update state, and UI components."""
     logger.info(f"Received {len(files) if files else 0} file(s) for processing with engine {ocr_engine}")
 
-    # --- Clear Output Directory Before Processing --- #
-    if ocr_processor and ocr_processor.output_dir:
-        clear_output_directory(ocr_processor.output_dir)
-    else:
-        logger.warning("OCR processor or output directory not available, cannot clear output directory.")
-
-    processed_results = {"text": {}, "images": {}}
-    errors_occurred = False
-    error_messages = []
-
-    # --- Initial UI State --- #
+    # --- Initialize UI update dictionary --- #
     initial_updates = {
         ui_components["result_selector"]: gr.Dropdown(choices=[], value=None, visible=False),
-        ui_components["md_output"]: "Processing...",
+        ui_components["md_output"]: "Initializing...", # Changed initial message
         ui_components["image_output"]: gr.update(value=None, visible=False),
         ui_components["download_format"]: gr.Radio(visible=False),
         ui_components["download_selected_btn"]: gr.Button(visible=False),
@@ -67,9 +60,30 @@ def process_document(files, ocr_engine, selected_openai_model, current_results_s
         ui_components["zip_download_trigger"]: gr.update(value=None, visible=False)
     }
 
+    # --- Input Validation --- #
     if not files:
         initial_updates[ui_components["md_output"]] = "Error: No files uploaded."
+        # Return the current state if no files
         return (*initial_updates.values(), current_results_state)
+
+    # --- Check File Count Limit --- #
+    if len(files) > MAX_FILES:
+        error_msg = f"Error: Too many files uploaded. Maximum allowed is {MAX_FILES}. You uploaded {len(files)}."
+        logger.warning(error_msg)
+        gr.Warning(error_msg) # Display warning popup to user
+        initial_updates[ui_components["md_output"]] = error_msg # Update markdown as well
+        # Return the current state if too many files
+        return (*initial_updates.values(), current_results_state)
+
+    # --- Clear Output Directory Before Processing --- #
+    if ocr_processor and ocr_processor.output_dir:
+        clear_output_directory(ocr_processor.output_dir)
+    else:
+        logger.warning("OCR processor or output directory not available, cannot clear output directory.")
+
+    processed_results = {"text": {}, "images": {}}
+    errors_occurred = False
+    error_messages = []
 
     # --- Pre-processing Checks --- #
     # Note: ocr_processor initialization should happen in app.py

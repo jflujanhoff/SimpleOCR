@@ -12,6 +12,8 @@ import openai # Still needed for initialize_ocr_processor validation check? Mayb
 from interface.interface import create_interface
 # Need DocumentOCR for type hinting or direct use if needed
 from ocr_processing import DocumentOCR
+# Import MAX_SIZE from variables
+from variables import MAX_SIZE
 
 # No longer need direct imports of callbacks here
 # from interface.process_ocr import (...)
@@ -135,6 +137,6 @@ if __name__ == "__main__":
     # Simplified launch logic
     print("Launching Gradio App...")
     # Use server_name="0.0.0.0" to make it accessible on the network if needed
-    demo.launch(auth=auth_creds, ssl_verify=False, share=False) # ssl_verify=False often needed for local dev
+    demo.launch(auth=auth_creds, ssl_verify=False, share=False, max_file_size=MAX_SIZE) # ssl_verify=False often needed for local dev
     # demo.launch(ssl_verify=False)
     print("Gradio App stopped.")

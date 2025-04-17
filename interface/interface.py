@@ -3,6 +3,9 @@ from custom_theme import delite_theme
 from functools import partial
 import logging # Add logging if wrappers use it
 
+# Import variables
+from variables import MAX_FILES
+
 # Import callback functions needed for wiring
 from .process_ocr import (
     process_document,

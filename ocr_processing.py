@@ -1,6 +1,7 @@
 import os
 import tempfile
 import base64
+import shutil
 from typing import Literal, Optional, Tuple, List
 from PIL import Image
 import io
