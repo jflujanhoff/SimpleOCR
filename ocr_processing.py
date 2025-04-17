@@ -8,6 +8,15 @@ from ocr_models import TesseractOCR, MistralOCR, OpenAICR, EasyOCROCR
 import logging
 import pillow_heif
 import openai # Need openai to handle potential exceptions during model listing
+from pathlib import Path
+import secrets
+try:
+    from docx import Document
+    PYTHON_DOCX_AVAILABLE = True
+except ImportError:
+    PYTHON_DOCX_AVAILABLE = False
+    # logger.warning("python-docx not installed. .doc/.docx file creation will be disabled.")
+    # Note: Logger might not be initialized here yet.
 
 # Register HEIF opener
 pillow_heif.register_heif_opener()
@@ -33,6 +42,11 @@ class DocumentOCR:
         self.openai = None
         self.available_openai_models: List[str] = [] # Store available models
         self.easyocr = None # Add easyocr attribute
+        self.output_dir = "output_files"
+        os.makedirs(self.output_dir, exist_ok=True)
+        # Add logger initialization confirmation for python-docx
+        if not PYTHON_DOCX_AVAILABLE:
+             logger.warning("python-docx not installed. .doc file creation will be disabled.")
 
         # Initialize EasyOCR - doesn't require API keys
         try:
@@ -325,23 +339,55 @@ class DocumentOCR:
             # Provide a more generic error message to the user
             return None, None, f"An unexpected error occurred: {str(e)}"
     
-    def download_ocr_result(self, ocr_result: str, file_format: str) -> Tuple[str, List[Tuple[str, str]]]:
-        """Generate a downloadable text file from the OCR result in the specified format."""
-        # No longer extracting images, just save the raw text.
-        
-        # Create a temporary file with the appropriate extension
-        temp_path = os.path.join(self.temp_dir, f"ocr_result_{os.urandom(8).hex()}.{file_format}")
-        
-        try:
-            # Write the result to the file
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                f.write(ocr_result)
-            logger.info(f"Saved OCR result to temporary file: {temp_path}")
-        except Exception as e:
-            logger.error(f"Error writing OCR result to file {temp_path}: {e}")
-            # Return None or raise error? Returning None might be handled downstream.
-            # For now, let's return an empty path and list, indicating failure.
-            return "", []
+    def download_ocr_result(self, ocr_result: str, file_format: str, original_filename: str) -> str | None:
+        """Generate a downloadable text file from the OCR result in the specified format, named after the original file."""
+        if not original_filename:
+            logger.error("Download failed: Original filename not provided.")
+            return None
 
-        # Return the path to the text file and an empty list (no extracted images)
-        return temp_path, [] 
+        try:
+            # Create the output filename using pathlib
+            base_name = Path(original_filename).stem
+            output_filename = f"{base_name}_{secrets.token_hex(4)}.{file_format}" # Add token to avoid collisions
+            output_path = Path(self.output_dir) / output_filename
+
+            logger.info(f"Attempting to save OCR result for '{original_filename}' to: {output_path}")
+
+            # Write the result to the file based on format
+            if file_format == 'txt':
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(ocr_result)
+            elif file_format == 'md':
+                # Assuming ocr_result is plain text, just save it as .md
+                # If specific markdown conversion is needed, add it here.
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(ocr_result)
+            elif file_format == 'doc':
+                if not PYTHON_DOCX_AVAILABLE:
+                    logger.error("Cannot create .doc file: python-docx package is missing.")
+                    # Consider raising an error or returning None
+                    return None
+                try:
+                    document = Document()
+                    # Add paragraph with the text
+                    document.add_paragraph(ocr_result)
+                    document.save(output_path)
+                    logger.info(f"Successfully created .doc file: {output_path}")
+                except Exception as docx_e:
+                    logger.error(f"Failed to create .doc file {output_path}: {docx_e}", exc_info=True)
+                    return None # Indicate failure
+            else:
+                logger.error(f"Unsupported file format requested: {file_format}")
+                return None
+
+            # Verify file creation
+            if output_path.exists():
+                logger.info(f"Successfully saved OCR result to: {output_path}")
+                return str(output_path) # Return the string path
+            else:
+                logger.error(f"File was not created after write attempt: {output_path}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error writing OCR result to file for {original_filename}: {e}", exc_info=True)
+            return None # Indicate failure 

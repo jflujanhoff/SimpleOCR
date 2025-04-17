@@ -8,6 +8,9 @@ import logging
 import json
 import openai
 from mistralai.client import MistralClient
+import zipfile
+import shutil
+from pathlib import Path
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -106,6 +109,33 @@ def initialize_ocr_processor():
         except Exception as restore_e:
             logger.error(f"Failed to restore environment variables after init error: {restore_e}")
 
+# --- Helper function to clear output directory ---
+def clear_output_directory(output_dir_path_str):
+    """Removes all files and subdirectories within the specified directory."""
+    if not output_dir_path_str:
+        logger.warning("Output directory path is not set. Skipping cleanup.")
+        return
+
+    output_dir_path = Path(output_dir_path_str)
+    logger.info(f"Attempting to clear output directory: {output_dir_path}")
+
+    if output_dir_path.exists() and output_dir_path.is_dir():
+        for item in output_dir_path.iterdir():
+            try:
+                if item.is_file() or item.is_symlink():
+                    item.unlink()
+                    logger.debug(f"Deleted file: {item}")
+                elif item.is_dir():
+                    shutil.rmtree(item)
+                    logger.debug(f"Deleted directory: {item}")
+            except Exception as e:
+                logger.error(f"Error deleting item {item}: {e}", exc_info=True)
+        logger.info(f"Successfully cleared output directory: {output_dir_path}")
+    elif not output_dir_path.exists():
+        logger.info(f"Output directory {output_dir_path} does not exist. No cleanup needed.")
+    else:
+        logger.warning(f"Path {output_dir_path} exists but is not a directory. Skipping cleanup.")
+
 # Initialize on startup
 initialize_ocr_processor()
 
@@ -198,108 +228,356 @@ def clear_api_key(engine):
     else:
         return f"❓ Engine {engine} not found or doesn't use API keys."
 
-# Modify process_document function signature
-def process_document(file, ocr_engine, selected_openai_model):
-    """Process a document using the specified OCR engine and selected OpenAI model."""
-    # Default error/empty state with hidden outputs
-    error_updates = {
+# Modify process_document function signature - now takes a list of files and state
+def process_document(files, ocr_engine, selected_openai_model, current_results_state):
+    """Process a list of documents, update state, and UI components."""
+    logger.info(f"Received {len(files) if files else 0} file(s) for processing with engine {ocr_engine}")
+
+    # --- Clear Output Directory Before Processing ---
+    if ocr_processor and ocr_processor.output_dir:
+        clear_output_directory(ocr_processor.output_dir)
+    else:
+        logger.warning("OCR processor or output directory not available, cannot clear output directory.")
+
+    # Initialize or reset state for this batch
+    # Keep existing results if you want cumulative processing, or reset like this:
+    # current_results_state = {"text": {}, "images": {}}
+    # For now, let's assume we process only the newly uploaded batch
+    processed_results = {"text": {}, "images": {}}
+    errors_occurred = False
+    error_messages = []
+
+    # --- Initial UI State --- #
+    initial_updates = {
+        result_selector: gr.Dropdown(choices=[], value=None, visible=False),
+        md_output: "Processing...",
         image_output: gr.update(value=None, visible=False),
-        md_output: "Error: Processing failed. Check inputs or logs.",
-        download_output: gr.update(value=[], visible=False)
+        download_format: gr.Radio(visible=False),
+        download_selected_btn: gr.Button(visible=False),
+        download_all_btn: gr.Button(visible=False),
+        download_options_md: gr.update(visible=False),
+        download_trigger_md: gr.update(visible=False),
+        single_download_trigger: gr.update(value=None, visible=False),
+        zip_download_trigger: gr.update(value=None, visible=False)
     }
 
-    if file is None:
-        error_updates[md_output] = "Error: No file uploaded."
-        return error_updates
+    if not files:
+        initial_updates[md_output] = "Error: No files uploaded."
+        # Return initial updates dictionary and the unchanged state
+        return (*initial_updates.values(), current_results_state) # Unpack values in order
 
+    # --- Pre-processing Checks --- #
     if ocr_processor is None:
         initialize_ocr_processor() # Attempt recovery
         if ocr_processor is None:
-             error_updates[md_output] = "Error: OCR processor failed to initialize. Check server logs."
-             return error_updates
+            initial_updates[md_output] = "Error: OCR processor failed to initialize. Check server logs."
+            return (*initial_updates.values(), current_results_state)
         logger.warning("OCR processor was None, attempted re-initialization.")
 
-    # Check availability before processing
     if ocr_engine not in available_engines:
-         error_updates[md_output] = f"Error: {ocr_engine} OCR is not available. Check API keys or server logs."
-         return error_updates
+        initial_updates[md_output] = f"Error: {ocr_engine} OCR is not available. Check API keys or server logs."
+        return (*initial_updates.values(), current_results_state)
 
-    # Added check for OpenAI model selection validity if OpenAI is the engine
     if ocr_engine == "OpenAI" and not selected_openai_model:
-        # Check if models are available at all on the processor
         if not (ocr_processor and ocr_processor.available_openai_models):
-             error_updates[md_output] = "Error: OpenAI engine selected, but no models could be loaded. Check API key and logs."
+             initial_updates[md_output] = "Error: OpenAI engine selected, but no models could be loaded."
         else:
-            error_updates[md_output] = "Error: OpenAI engine selected, but no specific model chosen. Please select a model in the API Keys tab."
-        return error_updates
+            initial_updates[md_output] = "Error: OpenAI engine selected, but no specific model chosen."
+        return (*initial_updates.values(), current_results_state)
 
-    try:
-        # Environment variable handling assumed done within DocumentOCR init/methods now
+    # --- Process Each File --- #
+    for file_obj in files:
+        original_filename = Path(file_obj.name).name # Use pathlib for robust name extraction
+        logger.info(f"Processing file: {original_filename}")
+        try:
+            # Environment variable handling assumed done within DocumentOCR init/methods now
+            _ , image_paths, result_text = ocr_processor.process_document(
+                file_obj, # Pass the whole Gradio file object
+                ocr_engine,
+                openai_model=selected_openai_model if ocr_engine == "OpenAI" else None
+            )
 
-        # Process the document, passing the selected OpenAI model
-        logger.info(f"Calling process_document with engine: {ocr_engine}, openai_model: {selected_openai_model if ocr_engine == 'OpenAI' else 'N/A'}")
-        file_name, image_paths, result_text = ocr_processor.process_document(
-            file,
-            ocr_engine,
-            openai_model=selected_openai_model if ocr_engine == "OpenAI" else None # Pass model only if OpenAI is selected
+            # Check for errors during individual file processing
+            if result_text is not None and result_text.startswith("Error:"):
+                logger.error(f"Error processing {original_filename}: {result_text}")
+                errors_occurred = True
+                error_messages.append(f"- {original_filename}: {result_text}")
+                # Store placeholder or error info
+                processed_results["text"][original_filename] = result_text
+                processed_results["images"][original_filename] = image_paths or [] # Store paths even on error
+            elif result_text is None:
+                logger.warning(f"No text extracted from {original_filename}.")
+                errors_occurred = True
+                error_msg = f"- {original_filename}: Could not extract text."
+                error_messages.append(error_msg)
+                processed_results["text"][original_filename] = "Error: Could not extract text."
+                processed_results["images"][original_filename] = image_paths or []
+            else:
+                # Success for this file
+                logger.info(f"Successfully processed {original_filename}. Text length: {len(result_text)}")
+                processed_results["text"][original_filename] = result_text
+                processed_results["images"][original_filename] = image_paths or []
+
+        except Exception as e:
+            error_msg = f"Error processing file {original_filename}: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            errors_occurred = True
+            error_messages.append(f"- {original_filename}: Processing failed unexpectedly. Check logs.")
+            processed_results["text"][original_filename] = f"Error: Processing failed unexpectedly."
+            processed_results["images"][original_filename] = [] # No images if critical error
+
+    # --- Update UI Based on Results --- #
+    final_md_output = ""
+    final_image_output_update = gr.update(value=None, visible=False)
+    final_dropdown_update = gr.Dropdown(choices=[], value=None, visible=False)
+    final_download_format_update = gr.Radio(visible=True, interactive=True)
+    final_dl_selected_btn_update = gr.Button(visible=True)
+    final_dl_all_btn_update = gr.Button(visible=True)
+    final_dl_options_md_update = gr.update(visible=False)
+    final_dl_trigger_md_update = gr.update(visible=False)
+
+    processed_filenames = list(processed_results["text"].keys())
+
+    if not processed_filenames: # Should not happen if input `files` was not empty, but safety check
+        final_md_output = "Error: No files were processed successfully."
+        if error_messages:
+             final_md_output += "\n\nErrors:\n" + "\n".join(error_messages)
+        # Hide download options if no success
+        final_dl_options_md_update = gr.update(visible=False)
+        final_dl_trigger_md_update = gr.update(visible=False)
+    else:
+        first_filename = processed_filenames[0] # Original filename key
+        # Generate dropdown choices: label shows ".md", value is the original filename
+        dropdown_choices = [(f"{Path(fn).stem}.md", fn) for fn in processed_filenames]
+
+        final_md_output = processed_results["text"][first_filename]
+
+        # Get image paths for the first file
+        first_file_images = processed_results["images"].get(first_filename, [])
+        valid_display_paths = [p for p in first_file_images if p is not None and os.path.exists(p)]
+        final_image_output_update = gr.update(value=valid_display_paths, visible=bool(valid_display_paths))
+
+        # Update dropdown with (label, value) pairs
+        final_dropdown_update = gr.Dropdown(
+            choices=dropdown_choices,
+            value=first_filename, # Use the original filename as the internal value
+            label="Select Processed File to View/Download",
+            interactive=True,
+            visible=True
         )
+        # Show download options on success
+        final_dl_options_md_update = gr.update(visible=True)
+        final_dl_trigger_md_update = gr.update(visible=True)
 
-        # Check for errors returned by process_document
-        if result_text is not None and result_text.startswith("Error:"):
-            error_updates[md_output] = result_text # Pass error message directly to UI
-            # Keep any potentially generated image previews for context
-            valid_display_paths = [p for p in image_paths if p is not None and os.path.exists(p)] if image_paths else []
-            error_updates[image_output] = gr.update(value=valid_display_paths, visible=bool(valid_display_paths))
-            return error_updates
+        # Prepend overall error summary if any occurred
+        if errors_occurred:
+            error_summary = f"**Warning:** Processing completed with errors for some files:\\n" + "\n".join(error_messages) + "\n\n---\n\n"
+            final_md_output = error_summary + final_md_output
 
-        if result_text is None:
-            error_updates[md_output] = "Error: Could not extract text from the document. Please try again with a different file or OCR engine."
-             # Keep any potentially generated image previews for context
-            valid_display_paths = [p for p in image_paths if p is not None and os.path.exists(p)] if image_paths else []
-            error_updates[image_output] = gr.update(value=valid_display_paths, visible=bool(valid_display_paths))
-            return error_updates
+    # Return updates for all relevant components and the new state
+    # Ensure download triggers are hidden initially after processing
+    final_single_dl_trigger_update = gr.update(visible=False)
+    final_zip_dl_trigger_update = gr.update(visible=False)
 
-        # Generate downloadable files
-        txt_path, _ = ocr_processor.download_ocr_result(result_text, "txt")
-        md_path, _ = ocr_processor.download_ocr_result(result_text, "md")
-        doc_path, _ = ocr_processor.download_ocr_result(result_text, "doc")
+    return (
+        final_dropdown_update,
+        final_md_output,
+        final_image_output_update,
+        final_download_format_update,
+        final_dl_selected_btn_update,
+        final_dl_all_btn_update,
+        final_dl_options_md_update,
+        final_dl_trigger_md_update,
+        final_single_dl_trigger_update,
+        final_zip_dl_trigger_update,
+        processed_results # The new state dictionary
+    )
 
-        download_files = [txt_path, md_path, doc_path]
-        existing_download_files = [f for f in download_files if f is not None and f != "" and os.path.exists(f)]
-
-        valid_display_paths = [p for p in image_paths if p is not None and os.path.exists(p)] if image_paths else []
-
-        success_updates = {
-            image_output: gr.update(value=valid_display_paths, visible=bool(valid_display_paths)),
-            md_output: result_text,
-            download_output: gr.update(value=existing_download_files, visible=bool(existing_download_files))
-        }
-        return success_updates
-
-    except Exception as e:
-        error_msg = f"Error processing document: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        error_updates[md_output] = error_msg
-        return error_updates
-
-# Function to clear OCR tab fields - now returns a dictionary
-def clear_ocr_fields():
-    """Clears the input and output fields in the OCR tab, returning updates dictionary."""
-    # Find the default engine, preferring Tesseract if available
+# Function to clear OCR tab fields - Needs update
+def clear_ocr_fields(current_results_state): # Takes state to clear it
+    """Clears the input and output fields in the OCR tab, including state."""
+    logger.info("Clearing OCR fields and results state.")
     default_engine = "Tesseract" if "Tesseract" in available_engines else (available_engines[0] if available_engines else None)
+    cleared_state = {"text": {}, "images": {}} # Reset state
     return {
         file_input: None,
         ocr_engine: default_engine,
-        image_output: gr.update(value=None, visible=False), # Clear and hide
+        image_output: gr.update(value=None, visible=False),
         md_output: "Extracted Text will appear here",
-        download_output: gr.update(value=[], visible=False) # Clear and hide
+        result_selector: gr.Dropdown(choices=[], value=None, visible=False, interactive=False),
+        download_format: gr.Radio(value="txt", visible=False, interactive=False),
+        download_selected_btn: gr.Button(visible=False),
+        download_all_btn: gr.Button(visible=False),
+        # Add updates for the markdown components to hide them
+        download_options_md: gr.update(visible=False),
+        download_trigger_md: gr.update(visible=False),
+        single_download_trigger: gr.update(value=None, visible=False), # Hide trigger and clear value on clear
+        zip_download_trigger: gr.update(value=None, visible=False),    # Hide trigger and clear value on clear
+        processed_results_state: cleared_state # Return cleared state
     }
 
-# --- New Functions for Modal Confirmation --- (Keep as is)
-# ... show_confirmation ...
-# ... hide_confirmation ...
-# ... handle_clear_click ...
-# ... clear_and_hide_confirmation ...
+# --- Functions for Result Display and Download --- #
+
+def display_selected_result(selected_filename, current_results_state):
+    """Updates the markdown and image preview based on dropdown selection."""
+    if not selected_filename or not current_results_state or selected_filename not in current_results_state["text"]:
+        logger.warning(f"display_selected_result: Filename '{selected_filename}' not found in state.")
+        return {
+            md_output: "Error: Could not load result for selected file.",
+            image_output: gr.update(value=None, visible=False)
+            # No need to update download triggers here, they remain hidden unless download is clicked
+        }
+
+    text_result = current_results_state["text"][selected_filename]
+    image_paths = current_results_state["images"].get(selected_filename, [])
+    valid_display_paths = [p for p in image_paths if p is not None and os.path.exists(p)]
+
+    logger.info(f"Displaying result for: {selected_filename}")
+    return {
+        md_output: text_result,
+        image_output: gr.update(value=valid_display_paths, visible=bool(valid_display_paths))
+        # No need to update download triggers here
+    }
+
+def download_selected_file(selected_filename, format_type, current_results_state):
+    """Generates a file for the selected document and returns its path for download."""
+    logger.info(f"Request to download '{selected_filename}' as '{format_type}'")
+    if not selected_filename or selected_filename not in current_results_state["text"]:
+        logger.error(f"Download failed: Filename '{selected_filename}' not found in results.")
+        gr.Warning(f"Cannot download: Result for '{selected_filename}' not found.")
+        # Return update to hide the trigger
+        return gr.update(visible=False)
+
+    result_text = current_results_state["text"][selected_filename]
+    if result_text.startswith("Error:"):
+        logger.warning(f"Attempting to download a file with processing errors: {selected_filename}")
+        gr.Warning(f"Cannot download: '{selected_filename}' had processing errors.")
+        # Return update to hide the trigger
+        return gr.update(visible=False)
+
+    try:
+        download_path = ocr_processor.download_ocr_result(result_text, format_type, original_filename=selected_filename)
+
+        if download_path and os.path.exists(download_path):
+            logger.info(f"Prepared file for download: {download_path}")
+            # Return update to show the trigger and provide the file path
+            return gr.update(value=download_path, visible=True)
+        else:
+            logger.error(f"Failed to create download file for {selected_filename}. Path: {download_path}")
+            gr.Error(f"Failed to create download file for {selected_filename}.")
+            # Return update to hide the trigger
+            return gr.update(visible=False)
+    except Exception as e:
+        logger.error(f"Error during download preparation for {selected_filename}: {e}", exc_info=True)
+        gr.Error(f"Error creating download for {selected_filename}: {e}")
+        # Return update to hide the trigger
+        return gr.update(visible=False)
+
+def download_all_files(format_type, current_results_state):
+    """Generates files for all results, zips them, and returns the zip path."""
+    logger.info(f"Request to download all results as '{format_type}' in a ZIP archive.")
+    filenames = list(current_results_state["text"].keys())
+    if not filenames:
+        logger.warning("Download all aborted: No results found.")
+        gr.Warning("No processed files available to download.")
+        # Return update to hide the trigger
+        return gr.update(visible=False)
+
+    # Create a temporary directory for individual files
+    temp_dir = Path(ocr_processor.output_dir) / f"temp_zip_{secrets.token_hex(4)}"
+    zip_path = Path(ocr_processor.output_dir) / f"ocr_results_{secrets.token_hex(8)}.zip"
+    try:
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        files_to_zip = []
+        files_with_errors = []
+
+        for filename in filenames:
+            result_text = current_results_state["text"][filename]
+            if result_text.startswith("Error:"):
+                logger.warning(f"Skipping file with error in zip: {filename}")
+                files_with_errors.append(filename)
+                continue # Skip files that had processing errors
+
+            # Generate the file in the temporary directory
+            try:
+                # Use modified download_ocr_result to create the file inside temp_dir
+                # Need to ensure download_ocr_result respects the output path (modify it?)
+                # OR: Create file directly here
+                base_name = Path(filename).stem
+                output_filename = f"{base_name}.{format_type}"
+                output_path = temp_dir / output_filename
+
+                # Reuse logic from download_ocr_result (adapt as necessary)
+                if format_type == 'txt':
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        f.write(result_text)
+                elif format_type == 'md':
+                     with open(output_path, 'w', encoding='utf-8') as f:
+                        f.write(result_text) # Assuming text is already markdown
+                elif format_type == 'doc':
+                     # Requires python-docx - check if installed/add dependency
+                    try:
+                        from docx import Document
+                        document = Document()
+                        document.add_paragraph(result_text)
+                        document.save(output_path)
+                    except ImportError:
+                        logger.error("python-docx not installed. Cannot create .doc file.")
+                        gr.Error("Cannot create .doc file: python-docx package is missing.")
+                        # Fallback or skip?
+                        continue # Skip this file for .doc format
+                    except Exception as docx_e:
+                        logger.error(f"Failed to create .doc for {filename}: {docx_e}", exc_info=True)
+                        gr.Warning(f"Failed to create .doc file for {filename}.")
+                        continue # Skip this file
+                else:
+                    logger.warning(f"Unsupported format '{format_type}' for file {filename}")
+                    continue # Skip unsupported formats
+
+                if output_path.exists():
+                    files_to_zip.append(output_path)
+                else:
+                    logger.warning(f"File not created for zip: {output_path}")
+
+            except Exception as file_e:
+                logger.error(f"Error generating file {filename} for zip: {file_e}", exc_info=True)
+                files_with_errors.append(filename)
+
+        if not files_to_zip:
+            logger.warning("No valid files were generated to include in the zip.")
+            if files_with_errors:
+                 gr.Warning(f"Could not create zip: All {len(files_with_errors)} file(s) had errors or could not be generated.")
+            else:
+                 gr.Warning("Could not create zip: No files to include.")
+            return gr.update(visible=False)
+
+        # Create the zip file
+        with zipfile.ZipFile(zip_path, 'w') as zf:
+            for file_path in files_to_zip:
+                zf.write(file_path, arcname=file_path.name) # Use only filename inside zip
+
+        logger.info(f"Created zip archive: {zip_path} with {len(files_to_zip)} file(s).")
+        if files_with_errors:
+             gr.Info(f"Zip created, but {len(files_with_errors)} file(s) were skipped due to errors: {', '.join(files_with_errors)}")
+
+        # Return update to show the trigger and provide the zip path
+        return gr.update(value=str(zip_path), visible=True)
+
+    except Exception as e:
+        logger.error(f"Error creating zip file: {e}", exc_info=True)
+        gr.Error(f"Failed to create zip archive: {e}")
+        # Return update to hide the trigger
+        return gr.update(visible=False)
+    finally:
+        # Clean up the temporary directory
+        if temp_dir.exists():
+            try:
+                shutil.rmtree(temp_dir)
+                logger.info(f"Cleaned up temporary directory: {temp_dir}")
+            except Exception as cleanup_e:
+                logger.error(f"Error cleaning up temp directory {temp_dir}: {cleanup_e}")
+
+
 # --- Functions for Modal Confirmation --- #
 
 def show_confirmation():
@@ -318,45 +596,97 @@ def hide_confirmation():
         cancel_clear_btn: gr.Button(visible=False)
     }
 
-def handle_clear_click(current_download: list | None):
-    """Handles the main Clear button click. Shows confirmation or clears directly."""
-    if current_download: # Check if there are files in download_output (proxy for results)
+# Modify handle_clear_click to check state
+def handle_clear_click(current_results_state):
+    """Handles the main Clear button click based on results state."""
+    # Check if the results state actually contains processed files
+    if current_results_state and current_results_state.get("text"):
         # Results exist, show confirmation
         updates = show_confirmation()
         # Add gr.update() for main fields to indicate no change yet
+        # Need to list all potentially affected UI components from the OCR tab
         updates[file_input] = gr.update()
         updates[ocr_engine] = gr.update()
         updates[image_output] = gr.update()
         updates[md_output] = gr.update()
-        updates[download_output] = gr.update()
+        updates[result_selector] = gr.update()
+        updates[download_format] = gr.update()
+        updates[download_selected_btn] = gr.update()
+        updates[download_all_btn] = gr.update()
+        updates[single_download_trigger] = gr.update() # Pass trigger update through
+        updates[zip_download_trigger] = gr.update()    # Pass trigger update through
+        updates[processed_results_state] = gr.update() # Pass state through
+        # Add updates for the new markdown components
+        updates[download_options_md] = gr.update()
+        updates[download_trigger_md] = gr.update()
+
         return updates
     else:
         # No results, clear directly and ensure confirmation is hidden
-        # Merge updates from clear_ocr_fields and hide_confirmation
-        updates = clear_ocr_fields() # Gets updates for main fields (including visibility)
+        updates = clear_ocr_fields(current_results_state) # Clears fields and returns updates dict including cleared state
         updates.update(hide_confirmation()) # Adds updates for confirmation UI
-        return updates
+        # Remove the state update from clear_ocr_fields dict as it's handled separately
+        cleared_state = updates.pop(processed_results_state)
+        # Get the trigger updates
+        single_dl_trigger_update = updates.pop(single_download_trigger)
+        zip_dl_trigger_update = updates.pop(zip_download_trigger)
+        # Get the markdown updates
+        dl_options_md_update = updates.pop(download_options_md)
+        dl_trigger_md_update = updates.pop(download_trigger_md)
 
-def clear_and_hide_confirmation():
-    """Clears the main fields and hides the confirmation UI."""
-    # Merge updates from clear_ocr_fields and hide_confirmation
-    updates = clear_ocr_fields() # Gets updates for main fields (including visibility)
-    updates.update(hide_confirmation()) # Adds updates for confirmation UI
+        # Ensure confirmation UI is hidden explicitly in the return tuple
+        hide_confirm_updates = hide_confirmation()
+        clear_confirm_msg_update = hide_confirm_updates[clear_confirm_msg]
+        confirm_clear_btn_update = hide_confirm_updates[confirm_clear_btn]
+        cancel_clear_btn_update = hide_confirm_updates[cancel_clear_btn]
+
+        # Unpack the dictionary values and add the confirmation UI, triggers, markdown, and cleared state at the end
+        return (
+            *updates.values(), # Unpack remaining UI updates from clear_ocr_fields
+            dl_options_md_update, dl_trigger_md_update, # Add markdown updates
+            clear_confirm_msg_update, confirm_clear_btn_update, cancel_clear_btn_update, # Add confirmation UI updates
+            single_dl_trigger_update, zip_dl_trigger_update, # Add trigger updates
+            cleared_state      # Add cleared state
+        )
+
+# Modify clear_and_hide_confirmation to clear state and return a dictionary
+def clear_and_hide_confirmation(current_results_state): # Takes state to clear it
+    """Clears the main fields, state, hides the confirmation UI, and returns an updates dictionary."""
+    logger.info("Confirm Clear clicked: Clearing fields and hiding confirmation.")
+
+    # --- Clear Output Directory on Confirm Clear ---
+    if ocr_processor and ocr_processor.output_dir:
+        clear_output_directory(ocr_processor.output_dir)
+    else:
+        logger.warning("OCR processor or output directory not available during clear confirmation, cannot clear output directory.")
+
+    # Get updates dictionary for clearing fields and state
+    updates = clear_ocr_fields(current_results_state)
+    # Get updates dictionary for hiding confirmation UI
+    hide_updates = hide_confirmation()
+    # Merge the two dictionaries
+    updates.update(hide_updates)
+    # Return the combined dictionary
     return updates
-
 
 # Create Gradio interface
 with gr.Blocks(theme=delite_theme) as demo:
     gr.Markdown("# Document OCR")
     gr.Markdown("Upload a document (PDF or image) to extract text using OCR.")
 
+    # --- Add State to store results ---
+    # Stores a dictionary mapping original filename to extracted text: {filename: text}
+    # Also stores image paths per file: {filename: [path1, path2,...]}
+    processed_results_state = gr.State({"text": {}, "images": {}})
+
     with gr.Tabs():
         # OCR Tab
         with gr.Tab("OCR"):
             with gr.Row():
                 with gr.Column():
-                    gr.Markdown("Upload Document to OCR")
-                    file_input = gr.File(label="Upload Document")
+                    gr.Markdown("Upload Document(s) to OCR")
+                    # --- Allow multiple files ---
+                    file_input = gr.File(label="Upload Document(s)", file_count="multiple")
                     # Initialize Radio button with currently available engines
                     ocr_engine = gr.Radio(
                         choices=available_engines,
@@ -366,10 +696,10 @@ with gr.Blocks(theme=delite_theme) as demo:
                     )
                     # Main action buttons
                     with gr.Row():
-                        process_btn = gr.Button("Process Document", variant="primary", scale=1)
+                        process_btn = gr.Button("Process Documents", variant="primary", scale=1) # Renamed slightly
                         clear_btn = gr.Button("Clear", variant="secondary", scale=1)
 
-                    # Confirmation UI (initially hidden)
+                    # Confirmation UI (initially hidden) - unchanged for now
                     clear_confirm_msg = gr.Markdown(value="", visible=False)
                     confirm_clear_btn = gr.Button("Confirm Clear", variant="stop", visible=False)
                     cancel_clear_btn = gr.Button("Cancel", variant="secondary", visible=False)
@@ -379,16 +709,48 @@ with gr.Blocks(theme=delite_theme) as demo:
                         confirm_clear_btn
                         cancel_clear_btn
 
-                    image_output = gr.Gallery(label="Document Pages", visible=False) # Initially hidden
+                    image_output = gr.Gallery(label="Document Pages Preview", visible=False) # Renamed, initially hidden
 
                 with gr.Column():
-                    # Revert to original markdown component with label and container
-                    gr.Markdown("Extracted Text")
+                    # --- New Result Selection and Download UI ---
+                    gr.Markdown("Extracted Text & Download")
+                    result_selector = gr.Dropdown(
+                        label="Select Processed File to View/Download",
+                        choices=[],
+                        value=None,
+                        interactive=True,
+                        visible=False # Initially hidden
+                    )
                     md_output = gr.Markdown(label="Extracted Text", container=True, show_copy_button=True, value="Extracted Text will appear here")
-                    # Configure download_output for multiple files
-                    download_output = gr.File(label="Download Results", file_count="multiple", visible=False) # Initially hidden
-                    # Update the download description
-                    gr.Markdown("Download the extracted text as .txt, .md, or .doc files.")
+
+                    # Assign variable and set initial visibility
+                    download_options_md = gr.Markdown("Download Options", visible=False)
+                    with gr.Row():
+                        download_format = gr.Radio(
+                            choices=["txt", "md", "doc"],
+                            value="txt",
+                            label="Download Format",
+                            interactive=True,
+                            scale=1,
+                            visible=False # Initially hidden
+                        )
+                    with gr.Row():
+                        download_selected_btn = gr.Button("Download Selected", variant="secondary", scale=1, visible=False) # Initially hidden
+                        download_all_btn = gr.Button("Download All (ZIP)", variant="secondary", scale=1, visible=False) # Initially hidden
+
+                    # --- Change: Make File components visible but non-interactive ---
+                    # Assign variable and set initial visibility
+                    download_trigger_md = gr.Markdown("Download Trigger Area (ignore)", visible=False) # Add explanation for user
+                    single_download_trigger = gr.File(
+                        label="Selected File Download",
+                        visible=False, # Initially hidden
+                        interactive=False
+                    )
+                    zip_download_trigger = gr.File(
+                        label="ZIP Archive Download",
+                        visible=False, # Initially hidden
+                        interactive=False
+                    )
 
         # API Keys Tab
         with gr.Tab("API Keys"):
@@ -437,12 +799,47 @@ with gr.Blocks(theme=delite_theme) as demo:
 
     # --- Event Handlers --- #
 
-    # Process button click - Add openai_model_select to inputs
+    # Process button click - Needs significant changes
+    # Inputs: file_input (list), ocr_engine, selected_openai_model, processed_results_state
+    # Outputs: result_selector, md_output, image_output, download_format, download_selected_btn, download_all_btn, processed_results_state
     process_btn.click(
         fn=process_document,
-        # Add openai_model_select to inputs
-        inputs=[file_input, ocr_engine, openai_model_select],
-        outputs=[image_output, md_output, download_output]
+        inputs=[file_input, ocr_engine, openai_model_select, processed_results_state], # Add state
+        # Update outputs for new UI components and match the return tuple order
+        outputs=[
+            result_selector,      # 1
+            md_output,            # 2
+            image_output,         # 3
+            download_format,      # 4
+            download_selected_btn,# 5
+            download_all_btn,     # 6
+            download_options_md,  # 7 - Added
+            download_trigger_md,  # 8 - Added
+            single_download_trigger, # 9
+            zip_download_trigger,    # 10
+            processed_results_state # 11 - Pass back the updated state
+        ]
+    )
+
+    # Update display when dropdown selection changes
+    result_selector.change(
+        fn=display_selected_result,
+        inputs=[result_selector, processed_results_state],
+        outputs=[md_output, image_output]
+    )
+
+    # Trigger single file download button click
+    download_selected_btn.click(
+        fn=download_selected_file,
+        inputs=[result_selector, download_format, processed_results_state],
+        outputs=[single_download_trigger] # Output to the hidden file component
+    )
+
+    # Trigger zip file download button click
+    download_all_btn.click(
+        fn=download_all_files,
+        inputs=[download_format, processed_results_state],
+        outputs=[zip_download_trigger] # Output to the hidden file component
     )
 
     # Define the comprehensive UI update function
@@ -565,21 +962,36 @@ with gr.Blocks(theme=delite_theme) as demo:
         outputs=[openai_key]
     )
 
-    # --- Clear Confirmation Handlers (remain the same) --- #
+    # --- Clear Confirmation Handlers (Need update for new state/UI) --- #
     clear_btn.click(
         fn=handle_clear_click,
-        inputs=[download_output],
+        inputs=[processed_results_state], # Check state instead of download_output
         outputs=[
-            file_input, ocr_engine, image_output, md_output, download_output,
-            clear_confirm_msg, confirm_clear_btn, cancel_clear_btn
+            # Main UI elements to potentially clear or update
+            file_input, ocr_engine, image_output, md_output,
+            result_selector, download_format, download_selected_btn, download_all_btn,
+            single_download_trigger, zip_download_trigger,
+            processed_results_state, # Pass state through
+            # Confirmation UI elements
+            clear_confirm_msg, confirm_clear_btn, cancel_clear_btn,
+            # Add the new markdown components
+            download_options_md, download_trigger_md
         ]
     )
     confirm_clear_btn.click(
         fn=clear_and_hide_confirmation,
-        inputs=[],
+        inputs=[processed_results_state], # Pass state to the clearing function
         outputs=[
-            file_input, ocr_engine, image_output, md_output, download_output,
-            clear_confirm_msg, confirm_clear_btn, cancel_clear_btn
+             # Main UI elements to clear
+            file_input, ocr_engine, image_output, md_output,
+            result_selector, download_format, download_selected_btn, download_all_btn,
+            # Confirmation UI elements (to hide)
+            clear_confirm_msg, confirm_clear_btn, cancel_clear_btn,
+             # Trigger UI elements (to hide)
+            single_download_trigger, zip_download_trigger,
+            # Add the new markdown components
+            download_options_md, download_trigger_md,
+            processed_results_state # State is cleared and returned
         ]
     )
     cancel_clear_btn.click(
