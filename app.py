@@ -135,6 +135,6 @@ if __name__ == "__main__":
     # Simplified launch logic
     print("Launching Gradio App...")
     # Use server_name="0.0.0.0" to make it accessible on the network if needed
-    # demo.launch(auth=auth_creds, ssl_verify=False, share=False) # ssl_verify=False often needed for local dev
-    demo.launch(ssl_verify=False)
+    demo.launch(auth=auth_creds, ssl_verify=False, share=False) # ssl_verify=False often needed for local dev
+    # demo.launch(ssl_verify=False)
     print("Gradio App stopped.")
