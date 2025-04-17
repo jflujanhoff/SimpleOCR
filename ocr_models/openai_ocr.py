@@ -27,7 +27,10 @@ class OpenAICR(BaseOCR):
             
         # Only initialize client if we have a key
         try:
+            # Store client for potential use later (e.g., fetching models in app.py)
             self.client = openai.OpenAI(api_key=api_key)
+            # Test connection briefly - list models is a light way
+            # self.client.models.list() # Optional: test connectivity here
         except Exception as e:
             logger.error(f"Failed to initialize OpenAI client: {str(e)}")
             raise ValueError(f"Failed to initialize OpenAI client: {str(e)}")
@@ -42,14 +45,25 @@ class OpenAICR(BaseOCR):
             Base64 encoded string of the image
         """
         buffered = io.BytesIO()
-        image.save(buffered, format="PNG")
+        # Ensure image is PNG for consistency with base64 data URL
+        save_format = "PNG"
+        if image.format == "JPEG": # Keep JPEG if original was JPEG? Let's stick to PNG for OpenAI
+            save_format = "PNG"
+
+        # Handle potential transparency issues by converting to RGB before saving as PNG
+        save_image = image
+        if image.mode in ("RGBA", "P"):
+             save_image = image.convert("RGB")
+
+        save_image.save(buffered, format=save_format)
         return base64.b64encode(buffered.getvalue()).decode('utf-8')
     
-    def process_image(self, image: Image.Image) -> Tuple[List[str], str]:
+    def process_image(self, image: Image.Image, model_name: str = "gpt-4o") -> Tuple[List[str], str]:
         """Process a single image using OpenAI's Vision API.
         
         Args:
             image: PIL Image object to process
+            model_name: The specific OpenAI model to use (e.g., "gpt-4o", "gpt-4-vision-preview")
             
         Returns:
             Tuple containing:
@@ -59,15 +73,16 @@ class OpenAICR(BaseOCR):
         try:
             # Save a copy of the image for display
             image_path = os.path.join(self.temp_dir, f"openai_image_{os.urandom(8).hex()}.png")
-            image.save(image_path, format="PNG")
+            # Ensure image is saved in a compatible format (like PNG)
+            save_image = image.convert("RGB") if image.mode != 'RGB' else image
+            save_image.save(image_path, format="PNG")
             
-            # Convert image to base64
-            base64_image = self._image_to_base64(image)
+            base64_image = self._image_to_base64(save_image)
             
-            # Call OpenAI Vision API
+            # Use the model_name parameter here
+            logger.info(f"Using OpenAI model: {model_name} for image OCR")
             response = self.client.chat.completions.create(
-                # model="gpt-4o-mini",
-                model="gpt-4.1",
+                model=model_name, # Use the parameter
                 messages=[
                     {
                         "role": "user",
@@ -85,7 +100,7 @@ class OpenAICR(BaseOCR):
                         ]
                     }
                 ],
-                max_tokens=4096
+                max_tokens=4096 # Consider making this configurable if needed
             )
             
             # Get the response content and ensure it's properly formatted
@@ -103,13 +118,15 @@ class OpenAICR(BaseOCR):
             
         except Exception as e:
             logger.error(f"OpenAI OCR processing failed: {str(e)}")
-            raise
+            # Reraise the exception to be handled upstream
+            raise e # Re-raise the original exception
     
-    def process_pdf(self, pdf_path: str) -> Tuple[List[str], str]:
+    def process_pdf(self, pdf_path: str, model_name: str = "gpt-4o") -> Tuple[List[str], str]:
         """Process a PDF document using OpenAI's Vision API.
         
         Args:
             pdf_path: Path to the PDF file
+            model_name: The specific OpenAI model to use
             
         Returns:
             Tuple containing:
@@ -124,6 +141,8 @@ class OpenAICR(BaseOCR):
             
             for page_num in range(len(doc)):
                 page = doc[page_num]
+                # Increase resolution for better OCR quality if needed
+                # pix = page.get_pixmap(dpi=300)
                 pix = page.get_pixmap()
                 
                 # Save page as image
@@ -131,13 +150,20 @@ class OpenAICR(BaseOCR):
                 pix.save(image_path)
                 image_paths.append(image_path)
                 
-                # Process image with OpenAI
+                # Process image with OpenAI using the provided model_name
                 with Image.open(image_path) as img:
-                    _, page_text = self.process_image(img)
-                    all_text.append(f"## Page {page_num+1}\n\n{page_text}")
+                     # Pass the model_name down
+                    _, page_text = self.process_image(img, model_name=model_name)
+                    # Handle potential None or empty page_text
+                    if page_text:
+                        all_text.append(f"## Page {page_num+1}\n\n{page_text}")
+                    else:
+                         all_text.append(f"## Page {page_num+1}\n\n[No text extracted]")
             
+            doc.close() # Close the document
             return image_paths, "\n\n".join(all_text)
             
         except Exception as e:
             logger.error(f"OpenAI PDF processing failed: {str(e)}")
-            raise 
+            # Reraise the exception
+            raise e # Re-raise the original exception 

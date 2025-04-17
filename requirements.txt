@@ -1,4 +1,4 @@
-gradio>=4.0.0
+gradio==5.25.2
 pytesseract>=0.3.10
 Pillow>=10.0.0
 PyMuPDF>=1.23.0
@@ -6,3 +6,7 @@ pillow-heif>=0.13.0
 mistralai>=0.1.1
 python-dotenv>=1.0.0
 openai>=1.0.0
+# Added for EasyOCR
+easyocr>=1.7.1
+torch>=2.0.0
+torchvision>=0.15.0
