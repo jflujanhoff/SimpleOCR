@@ -3,26 +3,10 @@ from custom_theme import delite_theme
 from functools import partial
 import logging # Add logging if wrappers use it
 
-# Import variables
-from variables import MAX_FILES
-
 # Import callback functions needed for wiring
-from .process_ocr import (
-    process_document,
-    download_selected_file,
-    download_all_files,
-    clear_output_directory # May be needed by clear wrappers
-)
-from .ui_interactions import (
-    save_api_key,
-    clear_api_key,
-    display_selected_result,
-    show_confirmation,
-    hide_confirmation,
-    handle_clear_click,
-    clear_and_hide_confirmation,
-    update_all_ui_elements
-)
+from .process_ocr import ProcessOCR # Removed individual function imports
+# Import the class, not individual functions
+from .ui_interactions import UIInteractions
 
 logger = logging.getLogger(__name__) # Add logger if needed
 
@@ -46,76 +30,88 @@ def create_interface(
         with gr.Tabs():
             # OCR Tab
             with gr.Tab("OCR"):
-                with gr.Row():
+                with gr.Column():
                     with gr.Column():
+                        # --- Upload Document(s) ---
                         gr.Markdown("Upload Document(s) to OCR")
-                        # --- Allow multiple files ---
-                        file_input = gr.File(label="Upload Document(s)", file_count="multiple")
-                        # Initialize Radio button with currently available engines
-                        ocr_engine = gr.Radio(
-                            choices=initial_available_engines,
-                            value=initial_available_engines[0] if initial_available_engines else None,
-                            label="OCR Engine",
-                            interactive=True
-                        )
-                        # Main action buttons
+                        with gr.Group():
+                            # --- Allow multiple files ---
+                            file_input = gr.File(label="Upload Document(s)", file_count="multiple")
+                            # Initialize Radio button with currently available engines
+                            ocr_engine = gr.Radio(
+                                choices=initial_available_engines,
+                                value=initial_available_engines[0] if initial_available_engines else None,
+                                label="OCR Engine",
+                                interactive=True
+                            )
+                            # Main action buttons
                         with gr.Row():
-                            process_btn = gr.Button("Process Documents", variant="primary", scale=1) # Renamed slightly
                             clear_btn = gr.Button("Clear", variant="secondary", scale=1)
-
+                            process_btn = gr.Button("Process Documents", variant="primary", scale=1) # Renamed slightly
+                            
                         # Confirmation UI (initially hidden) - unchanged for now
-                        clear_confirm_msg = gr.Markdown(value="", visible=False)
-                        confirm_clear_btn = gr.Button("Confirm Clear", variant="stop", visible=False)
-                        cancel_clear_btn = gr.Button("Cancel", variant="secondary", visible=False)
-                        with gr.Row(): # Contains the confirmation message
-                            clear_confirm_msg
-                        with gr.Row(): # Contains the confirmation buttons
-                            confirm_clear_btn
-                            cancel_clear_btn
+                        with gr.Group(visible=False) as clear_confirmation_group: # Assign variable and set initial visibility
+                            with gr.Row():
+                                clear_confirm_msg = gr.Markdown(value="", visible=False, container=True)
+                            
+                            with gr.Row():
+                                confirm_clear_btn = gr.Button("Confirm Clear", variant="stop", visible=False)
+                                cancel_clear_btn = gr.Button("Cancel", variant="secondary", visible=False)
 
-                        image_output = gr.Gallery(label="Document Pages Preview", visible=False) # Renamed, initially hidden
 
                     with gr.Column():
                         # --- New Result Selection and Download UI ---
                         gr.Markdown("Extracted Text & Download")
-                        result_selector = gr.Dropdown(
-                            label="Select Processed File to View/Download",
-                            choices=[],
-                            value=None,
-                            interactive=True,
-                            visible=False # Initially hidden
-                        )
-                        md_output = gr.Markdown(label="Extracted Text", container=True, show_copy_button=True, value="Extracted Text will appear here")
+                        with gr.Group(visible=True) as result_group:
+                            with gr.Group():
+                                result_selector = gr.Dropdown(
+                                    label="Select Processed File to View/Download",
+                                    choices=[],
+                                    value=None,
+                                    interactive=True,
+                                    visible=False # Initially hidden
+                                )
+                                with gr.Row():
+                                    image_output = gr.Gallery(label="Document Pages Preview", visible=False) # Renamed, initially hidden
+                                    md_output = gr.Markdown(label="Extracted Text", container=True, show_copy_button=True, value="Extracted Text will appear here", height=451)
 
-                        # Assign variable and set initial visibility
-                        download_options_md = gr.Markdown("Download Options", visible=False)
+                with gr.Column():
+                    # Assign variable and set initial visibility
+                    download_options_md = gr.Markdown("Download Options", visible=False)
+                    with gr.Group(visible=False) as download_group:
+
                         with gr.Row():
                             download_format = gr.Radio(
                                 choices=["txt", "md", "doc"],
                                 value="txt",
-                                label="Download Format",
+                                label="Format",
                                 interactive=True,
                                 scale=1,
                                 visible=False # Initially hidden
                             )
-                        with gr.Row():
-                            download_selected_btn = gr.Button("Download Selected", variant="secondary", scale=1, visible=False) # Initially hidden
-                            download_all_btn = gr.Button("Download All (ZIP)", variant="secondary", scale=1, visible=False) # Initially hidden
-
+                        
                         # --- Change: Make File components visible but non-interactive ---
                         # Assign variable and set initial visibility
-                        download_trigger_md = gr.Markdown("Download Trigger Area (ignore)", visible=False) # Add explanation for user
-                        single_download_trigger = gr.File(
-                            label="Selected File Download",
-                            visible=False, # Initially hidden
-                            interactive=False
-                        )
-                        zip_download_trigger = gr.File(
-                            label="ZIP Archive Download",
-                            visible=False, # Initially hidden
-                            interactive=False
-                        )
+                        # Rename inner group to avoid conflict
+                        with gr.Group(visible=False) as download_trigger_components_group:
+                            with gr.Row():
+                                single_download_trigger = gr.File(
+                                    label="Selected File Download",
+                                    visible=False, # Set back to False
+                                    interactive=False
+                                )
+                                zip_download_trigger = gr.File(
+                                    label="ZIP Archive Download",
+                                    visible=False, # Set back to False
+                                    interactive=False
+                                )
 
+                    with gr.Row():
+                        download_selected_btn = gr.Button("Download Selected", variant="secondary", scale=1, visible=False) # Initially hidden
+                        download_all_btn = gr.Button("Download All (ZIP)", variant="secondary", scale=1, visible=False) # Initially hidden
+
+
+                                
             # API Keys Tab
             with gr.Tab("API Keys"):
                 gr.Markdown("### Configure OCR API Keys")
@@ -125,36 +121,38 @@ def create_interface(
                 with gr.Accordion("Mistral OCR", open=False):
                     mistral_status = gr.Markdown(label="Status", value="")
                     with gr.Column():
-                        mistral_key = gr.Textbox(
-                            label="Mistral API Key",
-                            placeholder="Enter your Mistral API key...",
-                            type="password",
-                            value=""
-                        )
-                        with gr.Row():
-                            mistral_save_btn = gr.Button("Save Mistral API Key", variant="primary")
-                            mistral_clear_btn = gr.Button("Clear Key", variant="stop")
+                        with gr.Group():
+                            mistral_key = gr.Textbox(
+                                label="Mistral API Key",
+                                placeholder="Enter your Mistral API key...",
+                                type="password",
+                                value=""
+                            )
+                            with gr.Row():
+                                mistral_clear_btn = gr.Button("Clear Key", variant="stop")
+                                mistral_save_btn = gr.Button("Save Mistral API Key", variant="primary")
 
                 with gr.Accordion("OpenAI OCR", open=False):
                     openai_status = gr.Markdown(label="Status", value="")
                     with gr.Column():
-                        openai_key = gr.Textbox(
-                            label="OpenAI API Key",
-                            placeholder="Enter your OpenAI API key...",
-                            type="password",
-                            value=""  # Don't display key values
-                        )
-                        # Add the model selection dropdown here
-                        openai_model_select = gr.Dropdown(
-                            label="Select OpenAI Model",
-                            choices=[], # Will be populated dynamically
-                            value=None,
-                            visible=False, # Initially hidden
-                            interactive=True
-                        )
-                        with gr.Row():
-                            openai_save_btn = gr.Button("Save OpenAI API Key", variant="primary")
-                            openai_clear_btn = gr.Button("Clear Key", variant="stop")
+                        with gr.Group():
+                            openai_key = gr.Textbox(
+                                label="OpenAI API Key",
+                                placeholder="Enter your OpenAI API key...",
+                                type="password",
+                                value=""  # Don't display key values
+                            )
+                            # Add the model selection dropdown here
+                            openai_model_select = gr.Dropdown(
+                                label="Select OpenAI Model",
+                                choices=[], # Will be populated dynamically
+                                value=None,
+                                visible=False, # Initially hidden
+                                interactive=True
+                            )
+                            with gr.Row():
+                                openai_clear_btn = gr.Button("Clear Key", variant="stop")
+                                openai_save_btn = gr.Button("Save OpenAI API Key", variant="primary")
 
                 gr.Markdown("### Available OCR Engines")
                 gr.Markdown("The following OCR engines are currently available:")
@@ -178,7 +176,6 @@ def create_interface(
             "download_format": download_format,
             "download_selected_btn": download_selected_btn,
             "download_all_btn": download_all_btn,
-            "download_trigger_md": download_trigger_md,
             "single_download_trigger": single_download_trigger,
             "zip_download_trigger": zip_download_trigger,
             "mistral_status": mistral_status,
@@ -190,21 +187,43 @@ def create_interface(
             "openai_model_select": openai_model_select,
             "openai_save_btn": openai_save_btn,
             "openai_clear_btn": openai_clear_btn,
-            "available_engines_text": available_engines_text
+            "available_engines_text": available_engines_text,
+            "clear_confirmation_group": clear_confirmation_group,
+            "download_group": download_group, # Add download group
+            "result_group": result_group, # Add result group
+            "download_trigger_components_group": download_trigger_components_group # Add trigger group
         }
+
+        # --- Instantiate UIInteractions (New) ---
+        ui_interactions = UIInteractions(
+            api_keys=api_keys,
+            ocr_processor=ocr_processor,
+            ui_components=ui_components,
+            available_engines=available_engines, # Pass the live list reference
+            initialize_ocr_processor=initialize_ocr_processor,
+            # clear_output_directory=clear_output_directory # Pass the function
+        )
+
+        # --- Instantiate ProcessOCR (New) ---
+        process_ocr_handler = ProcessOCR(
+            ocr_processor=ocr_processor,
+            available_engines=available_engines,
+            ui_components=ui_components
+        )
 
         # --- Wire Up Event Handlers (Moved from app.py) ---
 
         # Process button click
         outputs_process = [
+            ui_components["result_group"], # Add result group here
             ui_components["result_selector"],
             ui_components["md_output"],
             ui_components["image_output"],
+            ui_components["download_group"], # Add download group here
             ui_components["download_format"],
             ui_components["download_selected_btn"],
             ui_components["download_all_btn"],
             ui_components["download_options_md"],
-            ui_components["download_trigger_md"],
             ui_components["single_download_trigger"],
             ui_components["zip_download_trigger"],
             ui_components["processed_results_state"]
@@ -217,33 +236,40 @@ def create_interface(
         ]
         # Use dependencies passed to create_interface
         process_btn.click(
-            fn=partial(process_document, ocr_processor=ocr_processor, available_engines=available_engines, ui_components=ui_components),
+            fn=process_ocr_handler.process_document, # Call the instance method directly
             inputs=inputs_process,
             outputs=outputs_process
         )
 
         # Update display when dropdown selection changes
         result_selector.change(
-            fn=partial(display_selected_result, ui_components=ui_components),
+            fn=ui_interactions.display_selected_result, # Use instance method
             inputs=[result_selector, processed_results_state],
             outputs=[md_output, image_output]
         )
 
         # Trigger single file download button click
         download_selected_btn.click(
-            fn=partial(download_selected_file, ocr_processor=ocr_processor),
+            fn=process_ocr_handler.download_selected_file, # Call the instance method directly
             inputs=[result_selector, download_format, processed_results_state],
-            outputs=[single_download_trigger]
+            outputs=[
+                single_download_trigger,
+                ui_components["download_trigger_components_group"] # Also update parent group visibility
+            ]
         )
 
         # Trigger zip file download button click
         download_all_btn.click(
-            fn=partial(download_all_files, ocr_processor=ocr_processor),
+            fn=process_ocr_handler.download_all_files, # Call the instance method directly
             inputs=[download_format, processed_results_state],
-            outputs=[zip_download_trigger]
+            outputs=[
+                zip_download_trigger,
+                ui_components["download_trigger_components_group"] # Also update parent group visibility
+            ]
         )
 
         # API key save/clear buttons
+        # Define the common outputs for UI updates after key changes
         update_ui_outputs = [
             ui_components["available_engines_text"],
             ui_components["ocr_engine"],
@@ -252,151 +278,119 @@ def create_interface(
             ui_components["openai_model_select"]
         ]
 
-        # Create partials using passed-in dependencies
-        partial_save_key = partial(save_api_key,
-                                   api_keys=api_keys,
-                                   initialize_ocr_processor=initialize_ocr_processor,
-                                   ocr_processor=ocr_processor,
-                                   available_engines=available_engines)
-
-        partial_clear_key = partial(clear_api_key,
-                                    api_keys=api_keys,
-                                    initialize_ocr_processor=initialize_ocr_processor)
-
-        # Wrapper needed for .then() to get current state
+        # Wrapper to call the instance method for UI updates
         def run_update_all_ui_elements_wrapper():
-             # This wrapper ensures the function uses the *current* state
-             # of passed dependencies (like available_engines which is mutable list)
-             # or refreshed ocr_processor instance when called by .then()
-             # It assumes update_all_ui_elements can handle ocr_processor being None
-             logger.info(f"[Wrapper] Running update_all_ui_elements. Current available_engines: {available_engines}") # Added Log
-             update_tuple = update_all_ui_elements(
-                 available_engines=available_engines,
-                 ocr_processor=ocr_processor,
-                 # Pass api_keys if needed by update_all_ui_elements
-                 # api_keys=api_keys
-             )
-             logger.info(f"[Wrapper] update_all_ui_elements returned: {update_tuple}") # Added Log
-             return update_tuple
+            logger.debug("Wrapper called: Running ui_interactions.update_all_ui_elements()")
+            # The ui_interactions instance holds references to api_keys, ocr_processor,
+            # available_engines which should be updated by initialize_ocr_processor
+            return ui_interactions.update_all_ui_elements()
 
+        # Mistral Save
         mistral_save_btn.click(
-            fn=partial_save_key,
-            inputs=[mistral_key, gr.Text(value="Mistral", visible=False)],
+            fn=ui_interactions.save_api_key, # Use instance method
+            inputs=[mistral_key, gr.Textbox(value="Mistral", visible=False)], # Pass engine name
             outputs=[mistral_status]
         ).then(
-            fn=run_update_all_ui_elements_wrapper, # Use wrapper
+            fn=run_update_all_ui_elements_wrapper,
+            inputs=None,
             outputs=update_ui_outputs
-        ).then(
-            fn=lambda: "", outputs=[mistral_key]
         )
 
+        # Mistral Clear
         mistral_clear_btn.click(
-            fn=partial_clear_key,
-            inputs=[gr.Text(value="Mistral", visible=False)],
+            fn=ui_interactions.clear_api_key, # Use instance method
+            inputs=[gr.Textbox(value="Mistral", visible=False)], # Pass engine name
             outputs=[mistral_status]
         ).then(
             fn=run_update_all_ui_elements_wrapper,
+            inputs=None,
             outputs=update_ui_outputs
-        ).then(
-            fn=lambda: "", outputs=[mistral_key]
         )
 
+        # OpenAI Save
         openai_save_btn.click(
-            fn=partial_save_key,
-            inputs=[openai_key, gr.Text(value="OpenAI", visible=False)],
+            fn=ui_interactions.save_api_key, # Use instance method
+            inputs=[openai_key, gr.Textbox(value="OpenAI", visible=False)], # Pass engine name
             outputs=[openai_status]
         ).then(
             fn=run_update_all_ui_elements_wrapper,
+            inputs=None,
             outputs=update_ui_outputs
-        ).then(
-            fn=lambda: "", outputs=[openai_key]
         )
 
+        # OpenAI Clear
         openai_clear_btn.click(
-            fn=partial_clear_key,
-            inputs=[gr.Text(value="OpenAI", visible=False)],
+            fn=ui_interactions.clear_api_key, # Use instance method
+            inputs=[gr.Textbox(value="OpenAI", visible=False)], # Pass engine name
             outputs=[openai_status]
         ).then(
             fn=run_update_all_ui_elements_wrapper,
+            inputs=None,
             outputs=update_ui_outputs
-        ).then(
-            fn=lambda: "", outputs=[openai_key]
         )
 
-        # --- Clear Confirmation Handlers --- (Keep wrappers for now)
-        clear_outputs_ordered = [
-            ui_components["file_input"], ui_components["ocr_engine"], ui_components["image_output"],
-            ui_components["md_output"], ui_components["result_selector"], ui_components["download_format"],
-            ui_components["download_selected_btn"], ui_components["download_all_btn"],
-            ui_components["download_options_md"], ui_components["download_trigger_md"],
-            ui_components["single_download_trigger"], ui_components["zip_download_trigger"],
-            ui_components["clear_confirm_msg"], ui_components["confirm_clear_btn"],
+        # --- Clear Button Logic ---
+        # Define the full list of outputs affected by clearing or showing confirmation
+        clear_outputs_list = [
+            # Components potentially cleared
+            ui_components["file_input"],
+            ui_components["ocr_engine"],
+            ui_components["image_output"],
+            ui_components["md_output"],
+            ui_components["result_selector"],
+            ui_components["download_group"], # Added download group here
+            ui_components["download_format"],
+            ui_components["download_selected_btn"],
+            ui_components["download_all_btn"],
+            ui_components["download_options_md"],
+            ui_components["single_download_trigger"],
+            ui_components["zip_download_trigger"],
+            # Confirmation UI components
+            ui_components["clear_confirmation_group"],
+            ui_components["clear_confirm_msg"],
+            ui_components["confirm_clear_btn"],
             ui_components["cancel_clear_btn"],
-            processed_results_state # State MUST BE LAST
+            # State component (must be last if method returns tuple(dict, state))
+            ui_components["processed_results_state"]
         ]
 
-        # Wrapper functions moved inside create_interface scope
-        def handle_clear_click_wrapper(current_results_state_val):
-            updates = handle_clear_click(
-                current_results_state=current_results_state_val,
-                available_engines=available_engines,
-                ui_components=ui_components,
-                ocr_processor=ocr_processor,
-                # Pass clear_output_directory if needed by the handler
-                # clear_output_directory_func=clear_output_directory
-            )
-            output_values = []
-            for comp in clear_outputs_ordered:
-                if comp == processed_results_state:
-                     output_values.append(updates.get(comp, gr.update()))
-                else:
-                    output_values.append(updates.get(comp, gr.update()))
-            return tuple(output_values)
-
-        def clear_and_hide_confirmation_wrapper(current_results_state_val):
-            updates = clear_and_hide_confirmation(
-                current_results_state=current_results_state_val,
-                available_engines=available_engines,
-                ui_components=ui_components,
-                ocr_processor=ocr_processor,
-                # Pass clear_output_directory if needed
-                # clear_output_directory_func=clear_output_directory
-            )
-            output_values = []
-            for comp in clear_outputs_ordered:
-                if comp == processed_results_state:
-                     output_values.append(updates.get(comp, {"text": {}, "images": {}}))
-                else:
-                    output_values.append(updates.get(comp, gr.update()))
-            return tuple(output_values)
-
+        # Initial Clear button click
         clear_btn.click(
-            fn=handle_clear_click_wrapper,
+            fn=ui_interactions.handle_clear_click, # Use instance method directly
             inputs=[processed_results_state],
-            outputs=clear_outputs_ordered
+            outputs=clear_outputs_list # Use the comprehensive list
+            # Note: Gradio maps the dict keys in the first element of the tuple
+            # to the corresponding components in the outputs list, and the second
+            # element of the tuple to the last component (the state).
         )
 
+        # Confirm Clear button click
         confirm_clear_btn.click(
-            fn=clear_and_hide_confirmation_wrapper,
+            fn=ui_interactions.clear_and_hide_confirmation, # Use instance method directly
             inputs=[processed_results_state],
-            outputs=clear_outputs_ordered
+            outputs=clear_outputs_list # Use the same comprehensive list
         )
 
+        # Cancel Clear button click
         cancel_clear_btn.click(
-            fn=partial(hide_confirmation, ui_components=ui_components),
-            inputs=[],
+            fn=ui_interactions.hide_confirmation, # Updated call back
+            inputs=None,
             outputs=[
+                ui_components["clear_confirmation_group"], # Added group
                 ui_components["clear_confirm_msg"],
                 ui_components["confirm_clear_btn"],
                 ui_components["cancel_clear_btn"]
             ]
         )
 
-        # Startup event
+        # --- Initial UI State Update ---
+        # Update UI elements based on initial state on load
+        # Needs to run after the UI is fully defined
         demo.load(
-            fn=run_update_all_ui_elements_wrapper, # Use wrapper
-            outputs=update_ui_outputs
+             fn=run_update_all_ui_elements_wrapper, # Use the wrapper to call instance method
+             inputs=None,
+             outputs=update_ui_outputs
         )
 
-    # Return the demo object and the UI components dictionary
+    # Return the demo object and the components dictionary
     return demo, ui_components

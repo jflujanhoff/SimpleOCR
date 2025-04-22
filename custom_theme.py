@@ -151,7 +151,7 @@ delite_theme = gr.themes.Base(
 
 
     # --- Buttons ---
-    button_border_width="2px",
+    button_border_width="0px",
     # Primary (Now Light Blue Button with Dark Blue Text)
     button_primary_background_fill=light_blue_4,
     button_primary_background_fill_hover=light_blue_6,
@@ -159,9 +159,9 @@ delite_theme = gr.themes.Base(
     button_primary_border_color=dark_blue_4, # dark_blue_4 border
 
     # Secondary (White Button with Dark Blue Text)
-    button_secondary_background_fill="#FFFFFF", # White background
-    button_secondary_background_fill_hover="*neutral_100", # Light gray hover
-    button_secondary_text_color=dark_blue_4, # dark_blue_4 text
+    button_secondary_background_fill=dark_blue_4, # White background
+    button_secondary_background_fill_hover=dark_blue_6, # Light gray hover
+    button_secondary_text_color="#FFFFFF", # dark_blue_4 text
     button_secondary_border_color=dark_blue_4, # dark_blue_4 border
 
     # --- Specific Components ---
