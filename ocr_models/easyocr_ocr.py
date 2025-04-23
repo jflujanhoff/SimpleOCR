@@ -8,6 +8,7 @@ import re
 from typing import Tuple, List
 from .base import BaseOCR
 import logging
+from .utils import format_page_marker # Import the new function
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -142,6 +143,7 @@ class EasyOCROCR(BaseOCR):
             
         image_paths = []
         all_text = []
+        page_count = len(images) # Get page count
 
         for i, img in enumerate(images, 1):
             # Save each page image for potential display
@@ -162,12 +164,27 @@ class EasyOCROCR(BaseOCR):
             # Process image with OCR
             try:
                 _, text = self.process_image(img) # Reuses the image processing method
-                all_text.append(f"## Page {i}\n\n{text}")
+                # Use H4 format for page indicator
+                # No longer needed as process_image doesn't add page count
+                text_lines = text.split('\n')
+            #    if len(text_lines) > 2 and text_lines[0].startswith("#### Page Count:"):
+            #        text = '\n'.join(text_lines[2:])
+                    
+                # Use the standardized marker function
+                page_marker = format_page_marker(page_num=i, total_pages=page_count)
+                all_text.append(f"{page_marker}{text}")
             except Exception as e:
-                all_text.append(f"## Page {i}\n\nError processing page {i}: {e}")
+                # Use H4 format for error message page indicator
+                page_marker = format_page_marker(page_num=i, total_pages=page_count)
+                all_text.append(f"{page_marker}Error processing page {i}: {e}")
 
 
         # Filter out None paths if any saving failed
         valid_image_paths = [p for p in image_paths if p is not None]
         
-        return valid_image_paths, "\n\n".join(all_text) 
+        # Combine text without the overall page count header
+        final_text = "\n\n".join(all_text)
+        # page_count_header = f"#### Page Count: {page_count}\n\n"
+        # final_output = page_count_header + final_text
+        
+        return valid_image_paths, final_text # Return combined text 

@@ -6,6 +6,7 @@ import os
 import re
 from typing import Tuple, List
 from .base import BaseOCR
+from .utils import format_page_marker
 
 class TesseractOCR(BaseOCR):
     """Tesseract OCR implementation."""
@@ -107,6 +108,7 @@ class TesseractOCR(BaseOCR):
         images = self._pdf_to_images(pdf_path)
         image_paths = []
         all_text = []
+        page_count = len(images) # Get page count
         
         for i, img in enumerate(images, 1):
             # Save image for display
@@ -116,6 +118,18 @@ class TesseractOCR(BaseOCR):
             
             # Process image with OCR
             _, text = self.process_image(img)
-            all_text.append(f"## Page {i}\n\n{text}")
+            # Use H4 format for page indicator
+            # No longer needed as process_image doesn't add page count
+            text_lines = text.split('\n')
+            # if len(text_lines) > 2 and text_lines[0].startswith("#### Page Count:"):
+            #     text = '\n'.join(text_lines[2:])
+            # Use the standardized marker function
+            page_marker = format_page_marker(page_num=i, total_pages=page_count)
+            all_text.append(f"{page_marker}{text}")
         
-        return image_paths, "\n\n".join(all_text) 
+        # Combine text without the overall page count header
+        final_text = "\n\n".join(all_text)
+        # page_count_header = f"#### Page Count: {page_count}\n\n"
+        # final_output = page_count_header + final_text
+        
+        return image_paths, final_text # Return combined text 

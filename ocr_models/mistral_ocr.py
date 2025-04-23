@@ -4,6 +4,7 @@ from typing import Tuple, List, Dict, Union
 from PIL import Image
 from mistralai import Mistral
 from mistralai.models import OCRResponse
+from .utils import format_page_marker
 from .base import BaseOCR
 from dotenv import load_dotenv
 import fitz  # PyMuPDF
@@ -249,29 +250,33 @@ class MistralOCR(BaseOCR):
                 result = self._mistral_ocr(pdf_path)
                 self._debug_log("Mistral OCR processing completed")
             except ValueError as e:
-                self._debug_log(f"OCR processing error: {str(e)}")
+                self._debug_log(f"Mistral OCR processing error: {str(e)}")
                 return [], f"OCR processing error: {str(e)}"
             except Exception as e:
-                self._debug_log(f"Unexpected OCR processing error: {str(e)}")
+                self._debug_log(f"Unexpected error during Mistral OCR: {str(e)}")
                 return [], f"Unexpected error during OCR processing: {str(e)}"
                 
+            # Process pages and extract markdown
             if not result.pages:
-                self._debug_log("No pages in OCR result")
-                return [], "No text could be extracted from the document. The OCR engine didn't recognize any content."
+                self._debug_log("Mistral OCR returned no pages")
+                return [], "No text could be extracted from the PDF. The OCR engine didn't recognize any content."
             
             markdown_parts = []
             
-            # Format each page's markdown content
+            # Restore page enumeration and use H4 for page markers
+            total_pages = len(result.pages)
             for i, page in enumerate(result.pages, 1):
                 # Clean the markdown before adding it
                 cleaned_markdown = self._clean_markdown(page.markdown)
-                markdown_parts.append(f"## Page {i}\n\n{cleaned_markdown}")
+                # Use the standardized marker function
+                page_marker = format_page_marker(page_num=i, total_pages=total_pages)
+                markdown_parts.append(f"{page_marker}{cleaned_markdown}")
             
-            # Combine all pages with proper markdown formatting
             final_markdown = "\n\n".join(markdown_parts)
             if not final_markdown.strip():
+                self._debug_log("Mistral OCR returned empty markdown after processing")
                 return [], "The document was processed, but no readable text content was found."
-                
+            
             return [], final_markdown
             
         except Exception as e:

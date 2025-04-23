@@ -6,6 +6,8 @@ import io
 import openai
 from .base import BaseOCR
 import logging
+import re
+from .utils import format_page_marker
 
 logger = logging.getLogger(__name__)
 
@@ -111,10 +113,13 @@ class OpenAICR(BaseOCR):
                 result = result.replace("```markdown", "").replace("```", "")
                 
                 # Ensure headings have space after #
-                import re
                 result = re.sub(r'(^|\n)#([^#\s])', r'\1# \2', result)
                 
-            return [image_path], result
+            # Remove page count header addition
+            # page_count_header = "#### Page Count: 1\\n\\n"
+            # final_result = page_count_header + (result if result else "[No text extracted]")
+            
+            return [image_path], result # Return original result
             
         except Exception as e:
             logger.error(f"OpenAI OCR processing failed: {str(e)}")
@@ -139,6 +144,8 @@ class OpenAICR(BaseOCR):
             image_paths = []
             all_text = []
             
+            page_count = len(doc) # Get page count
+            
             for page_num in range(len(doc)):
                 page = doc[page_num]
                 # Increase resolution for better OCR quality if needed
@@ -155,13 +162,30 @@ class OpenAICR(BaseOCR):
                      # Pass the model_name down
                     _, page_text = self.process_image(img, model_name=model_name)
                     # Handle potential None or empty page_text
+                    # Use H4 format for page indicator
                     if page_text:
-                        all_text.append(f"## Page {page_num+1}\n\n{page_text}")
+                        # Remove the H4 header from the page_text itself (it comes from process_image now reverted)
+                        # No longer needed as process_image doesn't add page count
+                        page_text_lines = page_text.split('\n') # Use single backslash
+                    #    if len(page_text_lines) > 2 and page_text_lines[0].startswith("#### Page Count:"):
+                    #        page_text = '\n'.join(page_text_lines[2:]) # Use single backslash
+                            
+                        # Use the standardized marker function
+                        page_marker = format_page_marker(page_num=page_num + 1, total_pages=page_count)
+                        all_text.append(f"{page_marker}{page_text}")
                     else:
-                         all_text.append(f"## Page {page_num+1}\n\n[No text extracted]")
+                        # Use the standardized marker function even for empty pages
+                        page_marker = format_page_marker(page_num=page_num + 1, total_pages=page_count)
+                        all_text.append(f"{page_marker}[No text extracted]")
             
             doc.close() # Close the document
-            return image_paths, "\n\n".join(all_text)
+            
+            # Combine text without the overall page count header
+            final_text = "\n\n".join(all_text) # Use single backslash
+            # page_count_header = f"#### Page Count: {page_count}\n\n"
+            # final_output = page_count_header + final_text
+            
+            return image_paths, final_text # Return combined text
             
         except Exception as e:
             logger.error(f"OpenAI PDF processing failed: {str(e)}")

@@ -79,6 +79,59 @@ class ProcessOCR:
             logger.error(f"Error creating DOCX file at {output_path}: {e}", exc_info=True)
             return False
 
+    # --- NEW Helper function to write simple text files ---
+    def _write_text_file(self, output_dir_path, base_filename, extension, text_content):
+        """Writes text content to a file with the specified extension."""
+        try:
+            output_filename = f"{base_filename}.{extension}"
+            output_path = output_dir_path / output_filename
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(text_content)
+            logger.info(f"Successfully wrote text file: {output_path}")
+            return output_path
+        except Exception as e:
+            logger.error(f"Error writing {extension} file {output_filename} in {output_dir_path}: {e}", exc_info=True)
+            return None
+
+    # --- Helper function to prepare output file based on format ---
+    def _prepare_output_file(self, base_filename, text_content, format_type, output_dir_path):
+        """Creates a file (.txt, .md, .docx) in the specified directory."""
+        output_path = None
+        try:
+            if format_type == "txt":
+                # Use the new helper
+                output_path = self._write_text_file(output_dir_path, base_filename, "txt", text_content)
+                # No specific log here as it's in the helper
+
+            elif format_type == "md":
+                # Use the new helper
+                output_path = self._write_text_file(output_dir_path, base_filename, "md", text_content)
+                 # No specific log here as it's in the helper
+                # OLD CODE:
+                # output_filename = f"{base_filename}.md"
+                # output_path = output_dir_path / output_filename
+                # with open(output_path, "w", encoding="utf-8") as f:
+                #     f.write(text_content) # For now, same as txt
+                # logger.info(f"Prepared MD file: {output_path}")
+
+            elif format_type == "doc": # Assuming 'doc' means '.docx'
+                output_filename = f"{base_filename}.docx"
+                output_path = output_dir_path / output_filename
+                if not self._create_docx_file(text_content, output_path):
+                    logger.error(f"Error creating DOCX file at {output_path}")
+                    return None
+                logger.info(f"Prepared DOCX file: {output_path}")
+
+            else:
+                logger.error(f"Unsupported format: {format_type}")
+                return None
+
+            return output_path
+
+        except Exception as e:
+            logger.error(f"Error preparing output file for {base_filename} as {format_type}: {e}", exc_info=True)
+            return None
+
     # --- Main OCR Processing Function --- #
     # TODO: Refactor to use self.ocr_processor, self.available_engines, self.ui_components if initialized
     def process_document(self, files, ocr_engine, selected_openai_model, current_results_state, ocr_processor=None, available_engines=None, ui_components=None):
@@ -330,33 +383,7 @@ class ProcessOCR:
         output_dir_path.mkdir(parents=True, exist_ok=True) # Ensure directory exists
 
         try:
-            output_path = None
-            if format_type == "txt":
-                output_filename = f"{base_filename}.txt"
-                output_path = output_dir_path / output_filename
-                with open(output_path, "w", encoding="utf-8") as f:
-                    f.write(text_content)
-                logger.info(f"Prepared TXT file for download: {output_path}")
-
-            elif format_type == "md":
-                output_filename = f"{base_filename}.md"
-                output_path = output_dir_path / output_filename
-                with open(output_path, "w", encoding="utf-8") as f:
-                    f.write(text_content) # For now, same as txt
-                logger.info(f"Prepared MD file for download: {output_path}")
-
-            elif format_type == "doc":
-                output_filename = f"{base_filename}.docx"
-                output_path = output_dir_path / output_filename
-                if not self._create_docx_file(text_content, output_path):
-                    gr.Error(f"Failed to create DOCX file for {selected_filename}.")
-                    return fail_return # Return tuple on docx creation failure
-                # If successful, output_path is set
-
-            else:
-                logger.error(f"Unsupported download format selected: {format_type}")
-                gr.Error(f"Unsupported format '{format_type}'. Cannot download.")
-                return fail_return # Return tuple
+            output_path = self._prepare_output_file(base_filename, text_content, format_type, output_dir_path)
 
             # If we reach here and output_path is set, it means success
             if output_path and output_path.exists():
@@ -412,47 +439,25 @@ class ProcessOCR:
                         continue
 
                     base_filename = Path(original_filename).stem
-                    temp_file_path = None # Path for the intermediate file
-                    temp_filename = None # Define temp_filename here
+                    # temp_file_path = None # Path for the intermediate file - Handled by helper
+                    # temp_filename = None # Define temp_filename here - No longer needed here
 
                     try:
-                        if format_type == "txt":
-                            file_ext = "txt"
-                            temp_filename = f"{base_filename}.{file_ext}"
-                            temp_file_path = temp_zip_dir / temp_filename
-                            with open(temp_file_path, "w", encoding="utf-8") as f:
-                                f.write(text_content)
-
-                        elif format_type == "md":
-                            file_ext = "md"
-                            temp_filename = f"{base_filename}.{file_ext}"
-                            temp_file_path = temp_zip_dir / temp_filename
-                            with open(temp_file_path, "w", encoding="utf-8") as f:
-                                f.write(text_content) # Same as txt for now
-
-                        elif format_type == "doc":
-                            file_ext = "docx"
-                            temp_filename = f"{base_filename}.{file_ext}"
-                            temp_file_path = temp_zip_dir / temp_filename
-                            if not self._create_docx_file(text_content, temp_file_path):
-                                 logger.warning(f"Failed to create DOCX for {original_filename}. Skipping in zip.")
-                                 continue # Skip adding this file to the zip
-
-                        else:
-                            logger.warning(f"Unsupported format '{format_type}' for file {original_filename}. Skipping in zip.")
-                            continue # Skip unsupported formats
+                        temp_file_path = self._prepare_output_file(base_filename, text_content, format_type, temp_zip_dir)
 
                         # Add the created file to the zip
-                        if temp_file_path and temp_file_path.exists() and temp_filename:
-                            zipf.write(temp_file_path, arcname=temp_filename)
-                            logger.debug(f"Added {temp_filename} to zip.")
+                        # Check if the helper returned a valid path and the file exists
+                        if temp_file_path and temp_file_path.exists():
+                            # Use the file's actual name for the archive name
+                            zipf.write(temp_file_path, arcname=temp_file_path.name)
+                            logger.debug(f"Added {temp_file_path.name} to zip.")
                             files_added_count += 1
                         else:
-                            logger.warning(f"Temporary file {temp_file_path} not found or not created for {original_filename}. Not added to zip.")
+                            # Log if the helper failed or the file doesn't exist
+                            logger.warning(f"File preparation failed for {original_filename} (format: {format_type}). Not added to zip.")
 
                     except Exception as file_e:
                         logger.error(f"Error processing file {original_filename} for zip archive: {file_e}", exc_info=True)
-                        # Optionally continue to try other files
 
             if files_added_count > 0:
                 logger.info(f"Created ZIP archive with {files_added_count} file(s): {zip_filepath}")
