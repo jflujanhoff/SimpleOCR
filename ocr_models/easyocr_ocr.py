@@ -4,7 +4,7 @@ from PIL import Image
 import fitz  # PyMuPDF
 import tempfile
 import os
-import re
+# import re # Removed unused import
 from typing import Tuple, List
 from .base import BaseOCR
 import logging
@@ -28,56 +28,116 @@ class EasyOCROCR(BaseOCR):
         try:
             # Initialize the EasyOCR reader
             # You might need to specify gpu=True/False depending on your setup
-            self.reader = easyocr.Reader(languages, gpu=True) 
+            self.reader = easyocr.Reader(languages, gpu=True)
             logger.info(f"EasyOCR initialized with languages: {languages}")
         except Exception as e:
             logger.error(f"Failed to initialize EasyOCR: {e}")
             # Optionally, re-raise or handle the error appropriately
             raise RuntimeError(f"EasyOCR initialization failed: {e}")
 
+    # Re-introduce parts of the formatting logic for line reconstruction and paragraph breaks
     def _format_as_markdown(self, results: List[Tuple[List[List[int]], str, float]]) -> str:
-        """Format EasyOCR results as markdown.
+        """Formats EasyOCR results by reconstructing lines and adding paragraph breaks based on vertical spacing.
 
         Args:
             results: List of tuples from EasyOCR: (bounding_box, text, confidence)
 
         Returns:
-            Formatted markdown text
+            Formatted text string with single newlines within paragraphs and double newlines between paragraphs.
         """
         if not results:
             return ""
 
-        # Extract text from results
-        text_lines = [item[1] for item in results]
-        
-        # Basic joining, similar structure to Tesseract formatting could be applied
-        # For simplicity, just join lines for now.
-        full_text = "\n".join(text_lines).strip()
-        
-        # Clean the text
-        full_text = full_text.strip()
-        
-        # Split text into lines for potential further formatting
-        lines = full_text.split('\n')
-        formatted_lines = []
-        
-        for i, line in enumerate(lines):
-            # Skip empty lines
-            if not line.strip():
-                formatted_lines.append("")
-                continue
-                
-            # Example: Make potential headings bold (simple heuristic)
-            if len(line.strip()) < 60 and line.strip().isupper():
-                 formatted_lines.append(f"**{line.strip()}**")
-                 continue
+        # --- Helper functions (re-introduced) ---
+        def get_vertical_center(bbox):
+            # Use min/max for robustness if box isn't perfectly rectangular
+            min_y = min(p[1] for p in bbox)
+            max_y = max(p[1] for p in bbox)
+            return (min_y + max_y) / 2.0
 
-            # Regular text
-            formatted_lines.append(line)
-        
-        # Join lines back together
-        return "\n".join(formatted_lines)
+        def get_height(bbox):
+            min_y = min(p[1] for p in bbox)
+            max_y = max(p[1] for p in bbox)
+            return max_y - min_y
+        # --- End Helper functions ---
 
+        # Sort results primarily by top y-coordinate, secondarily by left x-coordinate
+        results.sort(key=lambda item: (item[0][0][1], item[0][0][0]))
+
+        # --- Line Reconstruction ---
+        lines_data = []  # Stores lists of blocks for each detected line
+        if not results: return "" # Should be caught above, but safety first
+
+        current_line_blocks = [results[0]]
+
+        for i in range(1, len(results)):
+            prev_block = current_line_blocks[-1]
+            curr_block = results[i]
+
+            prev_center_y = get_vertical_center(prev_block[0])
+            curr_center_y = get_vertical_center(curr_block[0])
+            prev_height = get_height(prev_block[0])
+
+            # Threshold for starting a new line (if vertical distance > ~60% of prev block height)
+            # Add a small absolute minimum (e.g., 5 pixels)
+            vertical_threshold = max(5, prev_height * 0.6)
+
+            # Condition: Current block starts a new line if its center is significantly below the previous block's center
+            if curr_center_y > (prev_center_y + vertical_threshold):
+                lines_data.append(current_line_blocks) # Finalize previous line
+                current_line_blocks = [curr_block]      # Start new line
+            else:
+                current_line_blocks.append(curr_block) # Add to current line
+
+        # Add the last line
+        if current_line_blocks:
+            lines_data.append(current_line_blocks)
+        # --- End Line Reconstruction ---
+
+        # --- Calculate Line Geometry and Format Output ---
+        lines_geometry = []
+        for line_blocks in lines_data:
+            if not line_blocks: continue
+            # Sort blocks within the line horizontally before joining text
+            line_blocks.sort(key=lambda block: block[0][0][0])
+            line_text = " ".join([block[1] for block in line_blocks])
+
+            # Calculate overall line bounding box properties
+            min_y = min(block[0][0][1] for block in line_blocks) # Top-left Y of highest block
+            max_y = max(block[0][2][1] for block in line_blocks) # Bottom-right Y of lowest block
+            height = max_y - min_y
+
+            lines_geometry.append({
+                'text': line_text,
+                'top': min_y,
+                'bottom': max_y,
+                'height': height
+            })
+
+        output_lines = []
+        # Paragraph break threshold factor (e.g., gap > 0.7 * previous line height)
+        paragraph_threshold_factor = 0.7
+
+        for i, current_line_geom in enumerate(lines_geometry):
+            line_text = current_line_geom['text']
+            line_break = "\n" # Default break is a single newline
+
+            # Check for paragraph break *before* this line (if not the first line)
+            if i > 0:
+                prev_line_geom = lines_geometry[i-1]
+                vertical_gap = current_line_geom['top'] - prev_line_geom['bottom']
+                # Use previous line height as reference, add minimum threshold (e.g., 5px)
+                para_thresh = max(5, prev_line_geom['height'] * paragraph_threshold_factor)
+
+                if vertical_gap > para_thresh:
+                    line_break = "\n\n" # Use double newline for paragraph break
+
+            # Append the break character (if not the first line) and the line text
+            if i > 0:
+                output_lines.append(line_break)
+            output_lines.append(line_text)
+
+        return "".join(output_lines).strip() # Join lines with calculated breaks
 
     def process_image(self, image: Image.Image) -> Tuple[List[str], str]:
         """Process a single image using EasyOCR.
@@ -85,7 +145,7 @@ class EasyOCROCR(BaseOCR):
         Returns:
             Tuple containing:
             - List with path to the processed image for display
-            - Extracted text from the image as markdown
+            - Extracted text from the image (simplified format)
         """
         # Convert image to RGB if it's not already
         if image.mode != 'RGB':
@@ -97,8 +157,8 @@ class EasyOCROCR(BaseOCR):
         try:
             # Perform OCR
             results = self.reader.readtext(image_np)
-            
-            # Format results as markdown
+
+            # Format results using the *simplified* function
             markdown_text = self._format_as_markdown(results)
 
             # Save the original image for display in the UI
@@ -140,7 +200,7 @@ class EasyOCROCR(BaseOCR):
             images = self._pdf_to_images(pdf_path)
         except Exception as e:
             return [], f"Error converting PDF to images: {e}"
-            
+
         image_paths = []
         all_text = []
         page_count = len(images) # Get page count
@@ -164,27 +224,21 @@ class EasyOCROCR(BaseOCR):
             # Process image with OCR
             try:
                 _, text = self.process_image(img) # Reuses the image processing method
-                # Use H4 format for page indicator
-                # No longer needed as process_image doesn't add page count
-                text_lines = text.split('\n')
-            #    if len(text_lines) > 2 and text_lines[0].startswith("#### Page Count:"):
-            #        text = '\n'.join(text_lines[2:])
-                    
+
                 # Use the standardized marker function
                 page_marker = format_page_marker(page_num=i, total_pages=page_count)
-                all_text.append(f"{page_marker}{text}")
+                # Append the extracted text for this page after the marker
+                all_text.append(f"{page_marker}\n{text}") # Added newline after marker
             except Exception as e:
                 # Use H4 format for error message page indicator
                 page_marker = format_page_marker(page_num=i, total_pages=page_count)
-                all_text.append(f"{page_marker}Error processing page {i}: {e}")
+                all_text.append(f"{page_marker}\nError processing page {i}: {e}") # Added newline after marker
 
 
         # Filter out None paths if any saving failed
         valid_image_paths = [p for p in image_paths if p is not None]
-        
-        # Combine text without the overall page count header
-        final_text = "\n\n".join(all_text)
-        # page_count_header = f"#### Page Count: {page_count}\n\n"
-        # final_output = page_count_header + final_text
-        
+
+        # Combine text from all pages
+        final_text = "\n\n".join(all_text) # Use double newline between pages
+
         return valid_image_paths, final_text # Return combined text 

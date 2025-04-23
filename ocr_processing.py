@@ -327,60 +327,62 @@ class DocumentOCR:
              # Return generic error, potentially with no image path if saving failed
              return file_name, image_paths, f"Error processing image: {str(e)}"
     
-    def process_document(self, file, ocr_engine: OCR_ENGINE_TYPE, openai_model: str | None = None) -> Tuple[Optional[str], Optional[List[str]], Optional[str]]:
-        """Process a document using the specified OCR engine."""
+    def process_document(self, file_content: bytes, file_name: str, ocr_engine: OCR_ENGINE_TYPE, openai_model: str | None = None) -> Tuple[Optional[str], Optional[List[str]], Optional[str]]:
+        """Process a document's content using the specified OCR engine."""
         try:
-            # For Gradio file objects, we need to access the file path directly
-            if not hasattr(file, 'name'):
-                 return None, None, "Error: Invalid file object received."
+            # --- Check for empty file content ---
+            if not file_content:
+                logger.error(f"Processing aborted: Input content for '{file_name}' is empty.")
+                return file_name, [], f"Error: Input file content for '{file_name}' is empty."
+            # --- End of empty file content check ---
 
-            file_path = file.name
-            file_name = os.path.basename(file_path)
-            logger.info(f"Processing document: {file_name} with engine: {ocr_engine}")
+            # --- File reading and empty check removed, content/name are passed directly --- #
+            # if not hasattr(file, 'name'):
+            #      return None, None, "Error: Invalid file object received."
+            # file_path = file.name
+            # file_name = os.path.basename(file_path)
+
+            logger.info(f"Processing document content for: {file_name} with engine: {ocr_engine}")
             if ocr_engine == "OpenAI" and openai_model:
                 logger.info(f"Using OpenAI model: {openai_model}")
 
-            # Check engine availability early (redundant with checks inside _process methods, but good practice)
+            # Check engine availability early
             if ocr_engine == "Mistral" and self.mistral is None:
-                return None, None, "Error: Mistral OCR is not available. Check API key or server logs."
+                return file_name, [], "Error: Mistral OCR is not available. Check API key or server logs."
             if ocr_engine == "OpenAI" and self.openai is None:
-                return None, None, "Error: OpenAI OCR is not available. Check API key or server logs."
+                return file_name, [], "Error: OpenAI OCR is not available. Check API key or server logs."
             if ocr_engine == "EasyOCR" and self.easyocr is None:
-                return None, None, "Error: EasyOCR is not available. Check server logs for initialization errors."
-            if ocr_engine == "Tesseract" and self.tesseract is None: # Should always be available unless init failed badly
-                 return None, None, "Error: Tesseract OCR is not available. Check server logs."
+                return file_name, [], "Error: EasyOCR is not available. Check server logs for initialization errors."
+            if ocr_engine == "Tesseract" and self.tesseract is None:
+                 return file_name, [], "Error: Tesseract OCR is not available. Check server logs."
 
-            # Read the file content
-            with open(file_path, 'rb') as f:
-                file_content = f.read()
-            
             # Determine file type and process accordingly
-            # Pass openai_model to the processing methods
             if file_name.lower().endswith('.pdf'):
+                # Pass content directly
                 _, image_paths, result_text = self._process_pdf_document(file_content, file_name, ocr_engine, openai_model=openai_model)
-            elif file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.heic')):
+            elif file_name.lower().endswith( ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.heic') ):
+                # Pass content directly
                 _, image_paths, result_text = self._process_image_document(file_content, file_name, ocr_engine, openai_model=openai_model)
             else:
-                return None, None, f"Error: Unsupported file type: {os.path.splitext(file_name)[1]}. Please upload a PDF or image file."
-            
+                # Return filename for context in error message
+                return file_name, [], f"Error: Unsupported file type: {os.path.splitext(file_name)[1]}. Please upload a PDF or image file."
+
             # Check for errors returned as result_text
             if result_text is not None and result_text.startswith("Error:"):
-                # Return image paths even if text extraction failed, for context
-                return file_name, image_paths, result_text # Propagate error message
+                return file_name, image_paths, result_text
 
             if result_text is None:
-                # Provide image paths if available
-                return file_name, image_paths, "Error: Could not extract text from the document. Please try again with a different file or OCR engine."
+                return file_name, image_paths, "Error: Could not extract text from the document."
 
-            # Ensure image_paths is a list
             if image_paths is None: image_paths = []
 
             return file_name, image_paths, result_text
-                
+
         except Exception as e:
-            logger.error(f"Error processing document: {str(e)}", exc_info=True)
-            # Provide a more generic error message to the user
-            return None, None, f"An unexpected error occurred: {str(e)}"
+            logger.error(f"Error processing document content for {file_name}: {str(e)}", exc_info=True)
+            # Return filename if available, otherwise None
+            err_filename = file_name if 'file_name' in locals() else None
+            return err_filename, [], f"An unexpected error occurred: {str(e)}"
     
     def download_ocr_result(self, ocr_result: str, file_format: str, original_filename: str) -> str | None:
         """Generate a downloadable text file from the OCR result in the specified format, named after the original file."""

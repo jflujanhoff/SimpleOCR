@@ -110,8 +110,6 @@ def create_interface(
                         download_selected_btn = gr.Button("Download Selected", variant="secondary", scale=1, visible=False) # Initially hidden
                         download_all_btn = gr.Button("Download All (ZIP)", variant="secondary", scale=1, visible=False) # Initially hidden
 
-
-                                
             # API Keys Tab
             with gr.Tab("API Keys"):
                 gr.Markdown("### Configure OCR API Keys")
@@ -159,6 +157,28 @@ def create_interface(
                 # Update Markdown text using the helper function - will be populated by update_all_ui_elements
                 available_engines_text = gr.Markdown(value="Loading available engines...") # Initial placeholder
 
+            # Placeholder Tabs
+            with gr.Tab("Download"):
+                gr.Markdown("### Download Options")
+                gr.Markdown("Download functionality will be implemented here.")
+                # We can move the existing download buttons/options here later if desired.
+
+            with gr.Tab("Make a Resume"):
+                gr.Markdown("### Document Summary & Explanation")
+                with gr.Row():
+                    # Placeholder for file/page counts
+                    file_page_count_md = gr.Markdown("Processed Files: 0 | Total Pages: 0")
+                with gr.Row():
+                    # Button to trigger explanation
+                    explain_btn = gr.Button("Explain Text", variant="primary")
+                with gr.Row():
+                    # Area to display the explanation
+                    explanation_output_md = gr.Markdown("Click 'Explain Text' to generate a summary based on the processed content.", visible=True)
+
+            with gr.Tab("Translate"):
+                gr.Markdown("### Translation")
+                gr.Markdown("Translation functionality will be implemented here.")
+
         # --- Store components in a dictionary for easy access ---
         ui_components = {
             "processed_results_state": processed_results_state,
@@ -191,7 +211,11 @@ def create_interface(
             "clear_confirmation_group": clear_confirmation_group,
             "download_group": download_group, # Add download group
             "result_group": result_group, # Add result group
-            "download_trigger_components_group": download_trigger_components_group # Add trigger group
+            "download_trigger_components_group": download_trigger_components_group, # Add trigger group
+            # --- Add new components for explanation ---
+            "file_page_count_md": file_page_count_md,
+            "explain_btn": explain_btn,
+            "explanation_output_md": explanation_output_md
         }
 
         # --- Instantiate UIInteractions (New) ---
@@ -226,7 +250,9 @@ def create_interface(
             ui_components["download_options_md"],
             ui_components["single_download_trigger"],
             ui_components["zip_download_trigger"],
-            ui_components["processed_results_state"]
+            ui_components["processed_results_state"],
+            # --- Add update for file/page count ---
+            ui_components["file_page_count_md"]
         ]
         inputs_process = [
             ui_components["file_input"],
@@ -380,6 +406,16 @@ def create_interface(
                 ui_components["clear_confirm_msg"],
                 ui_components["confirm_clear_btn"],
                 ui_components["cancel_clear_btn"]
+            ]
+        )
+
+        # --- Wire up Explain Text button ---
+        explain_btn.click(
+            fn=ui_interactions.generate_explanation, # New method in UIInteractions
+            inputs=[processed_results_state],
+            outputs=[
+                ui_components["file_page_count_md"],
+                ui_components["explanation_output_md"]
             ]
         )
 

@@ -208,9 +208,12 @@ class ProcessOCR:
             logger.warning("Output directory not available, cannot clear output directory.")
 
 
+        # --- Initialize counts for successful files --- #
         processed_results = {"text": {}, "images": {}}
         errors_occurred = False
         error_messages = []
+        successful_file_count = 0 # Count only non-error files
+        total_page_count = 0      # Sum pages only from non-error files
 
         # --- Pre-processing Checks --- #
         # Note: ocr_processor should be initialized before calling this method
@@ -235,25 +238,60 @@ class ProcessOCR:
             # Gradio File objects might have absolute paths, ensure we only use the filename part
             original_filename = Path(getattr(file_obj, 'name', f"unknown_file_{secrets.token_hex(4)}")).name
             logger.info(f"Processing file: {original_filename}")
-            try:
-                logger.info(f"[process_document callback] Before calling process_document for {original_filename}:")
-                logger.info(f"  ocr_processor object: {ocr_processor}")
-                mistral_engine_state = getattr(ocr_processor, 'mistral', 'Attribute not found')
-                logger.info(f"  ocr_processor.mistral state: {mistral_engine_state}")
 
+            # --- Read file content immediately --- #
+            file_content = None
+            error_reading_file = None
+            try:
+                file_path = file_obj.name
+                logger.info(f"Attempting to read temporary file path: {file_path} for original: {original_filename}")
+                with open(file_path, 'rb') as f:
+                    file_content = f.read()
+                if not file_content:
+                    error_reading_file = f"Error: File '{original_filename}' is empty."
+                    logger.error(error_reading_file)
+                else:
+                    logger.info(f"Successfully read {len(file_content)} bytes from temp file for {original_filename}")
+            except Exception as read_e:
+                error_reading_file = f"Error reading temporary file for {original_filename}: {read_e}"
+                logger.error(error_reading_file, exc_info=True)
+            # --- End read --- #
+
+            # --- Skip if read failed --- #
+            if error_reading_file:
+                errors_occurred = True
+                error_messages.append(f"- {original_filename}: Failed to read file content.")
+                processed_results["text"][original_filename] = error_reading_file # Store read error
+                processed_results["images"][original_filename] = []
+                continue # Skip to the next file
+            # --- End skip --- #
+
+            try:
+                # ... (logging before call - can be removed if desired) ...
+                # logger.info(f"[process_document callback] Before calling process_document for {original_filename}:")
+                # logger.info(f"  ocr_processor object: {ocr_processor}")
+                # mistral_engine_state = getattr(ocr_processor, 'mistral', 'Attribute not found')
+                # logger.info(f"  ocr_processor.mistral state: {mistral_engine_state}")
+
+                # --- Pass file_content and filename, not file_obj --- #
                 _ , image_paths, result_text = ocr_processor.process_document(
-                    file_obj, # Pass the file object (e.g., temp file path)
-                    ocr_engine,
+                    file_content=file_content,
+                    file_name=original_filename, # Pass the extracted filename
+                    ocr_engine=ocr_engine,
                     openai_model=selected_openai_model if ocr_engine == "OpenAI" else None
                 )
+                # --- End change --- #
 
+                # --- Handle Results --- #
                 if result_text is not None and result_text.startswith("Error:"):
+                    # Handle Error Result
                     logger.error(f"Error processing {original_filename}: {result_text}")
                     errors_occurred = True
                     error_messages.append(f"- {original_filename}: {result_text}")
                     processed_results["text"][original_filename] = result_text
                     processed_results["images"][original_filename] = image_paths or []
                 elif result_text is None:
+                    # Handle Null Result (treat as error)
                     logger.warning(f"No text extracted from {original_filename}.")
                     errors_occurred = True
                     error_msg = f"- {original_filename}: Could not extract text."
@@ -261,11 +299,20 @@ class ProcessOCR:
                     processed_results["text"][original_filename] = "Error: Could not extract text."
                     processed_results["images"][original_filename] = image_paths or []
                 else:
-                    logger.info(f"Successfully processed {original_filename}. Text length: {len(result_text)}")
+                    # Handle Success Result
+                    logger.info(f"Successfully processed {original_filename}.")
                     processed_results["text"][original_filename] = result_text
                     processed_results["images"][original_filename] = image_paths or []
 
+                    # --- Increment counts only on success --- #
+                    successful_file_count += 1
+                    # --- Count pages based on number of returned image paths --- #
+                    pages_in_file = len(image_paths) if image_paths else 0
+                    total_page_count += pages_in_file
+                    logger.debug(f"Counted {pages_in_file} pages for {original_filename} based on image paths.")
+
             except Exception as e:
+                # Handle Exception during processing
                 error_msg = f"Error processing file {original_filename}: {str(e)}"
                 logger.error(error_msg, exc_info=True)
                 errors_occurred = True
@@ -273,81 +320,96 @@ class ProcessOCR:
                 processed_results["text"][original_filename] = f"Error: Processing failed unexpectedly."
                 processed_results["images"][original_filename] = []
 
-        # --- Update UI Based on Results --- #
-        final_md_output = ""
-        final_image_output_update = gr.update(value=None, visible=False)
-        final_dropdown_update = gr.Dropdown(choices=[], value=None, visible=False)
-        final_download_format_update = gr.Radio(visible=True, interactive=True)
-        final_dl_selected_btn_update = gr.Button(visible=True)
-        final_dl_all_btn_update = gr.Button(visible=True)
-        final_dl_options_md_update = gr.update(visible=False)
-        final_download_group_update = gr.update(visible=False) # Initialize as hidden
-        final_result_group_update = gr.update(visible=False) # Initialize result group as hidden
+        # --- Final UI Update Preparation --- #
 
-        processed_filenames = list(processed_results["text"].keys())
+        # Calculate count string using counters updated during the loop
+        count_string = f"Processed Files: {successful_file_count} | Total Pages: {total_page_count}"
+        logger.info(f"Final counts (successful files only): {count_string}")
 
-        if not processed_filenames:
-            final_md_output = "Error: No files were processed successfully."
-            if error_messages:
-                 final_md_output += "\n\nErrors:\n" + "\n".join(error_messages)
-            final_dl_options_md_update = gr.update(visible=False)
-            # Ensure download buttons are hidden if nothing processed
-            final_download_format_update = gr.Radio(visible=False)
-            final_dl_selected_btn_update = gr.Button(visible=False)
-            final_dl_all_btn_update = gr.Button(visible=False)
-            # Keep final_download_group_update and final_result_group_update as hidden (already are)
+        # --- Determine initial display text (errors or first result) --- #
+        if errors_occurred:
+            # Prepend error messages to the first successful result's text if any exist
+            # Or display errors in a dedicated area (better UX, but requires UI change)
+            final_md_output = "\\n---\\n".join(error_messages)
+            # If there are also results, show them after errors
+            if processed_results["text"]:
+                first_filename = list(processed_results["text"].keys())[0]
+                final_md_output += "\\n\\n**First Processed Result:**\\n" + "\\n".join(processed_results["text"][first_filename]) # Assuming list format
+            logger.warning(f"Processing finished with errors: {error_messages}")
+            # Display the first error in the MD output for immediate feedback
+            # updates[ui_components["md_output"]] = error_messages[0] # Replaced by final_md_output below
+        elif not processed_results["text"]:
+             # No errors, but also no results (e.g., empty files?)
+             final_md_output = "Processing complete, but no text could be extracted."
+             logger.info("Processing complete, but no text was extracted.")
         else:
-            # Make result group visible since we have results
-            final_result_group_update = gr.update(visible=True)
-            # Also make the download group visible (buttons inside might still be hidden)
-            final_download_group_update = gr.update(visible=True)
+            # Display the first result
+            first_filename = list(processed_results["text"].keys())[0]
+            # Assign the text directly, don't join characters
+            final_md_output = processed_results["text"][first_filename]
+            logger.info(f"Processing successful. Displaying first result: {first_filename}")
 
-            first_filename = processed_filenames[0]
-            # Use original filename as both label and value for simplicity
-            dropdown_choices = processed_filenames
-            # Ensure we don't try to display error messages as primary output
-            first_file_result = processed_results["text"][first_filename]
-            if first_file_result.startswith("Error:"):
-                final_md_output = first_file_result # Display the error for the first file
+        # --- Prepare Final Updates Dictionary --- #
+        # Start with initial (mostly hidden) state
+        updates = initial_updates.copy()
+        # Override specific components based on results
+
+        # Populate dropdown and potentially show first result
+        if processed_results["text"]:
+            filenames = list(processed_results["text"].keys())
+            first_filename = filenames[0]
+            updates[ui_components["result_selector"]] = gr.Dropdown(choices=filenames, value=first_filename, label="Select Processed File", visible=True, interactive=True)
+            updates[ui_components["md_output"]] = final_md_output # Show first result or errors
+
+            # Show images for the first result if available
+            first_image_paths = processed_results.get("images", {}).get(first_filename, [])
+            valid_first_image_paths = [p for p in first_image_paths if p and Path(p).exists()]
+            if valid_first_image_paths:
+                 updates[ui_components["image_output"]] = gr.update(value=valid_first_image_paths, visible=True)
             else:
-                final_md_output = first_file_result
+                 updates[ui_components["image_output"]] = gr.update(value=None, visible=False) # Ensure it's hidden if no images
 
-            first_file_images = processed_results["images"].get(first_filename, [])
-            valid_display_paths = [p for p in first_file_images if p is not None and os.path.exists(p)]
-            final_image_output_update = gr.update(value=valid_display_paths, visible=bool(valid_display_paths))
 
-            final_dropdown_update = gr.Dropdown(
-                choices=dropdown_choices,
-                value=first_filename,
-                label="Select Processed File to View/Download",
-                interactive=True,
-                visible=True
-            )
-            final_dl_options_md_update = gr.update(visible=True)
+            # Make download section visible
+            updates[ui_components["download_group"]] = gr.update(visible=True) # Show download group
+            updates[ui_components["download_options_md"]] = gr.update(visible=True)
+            updates[ui_components["download_format"]] = gr.Radio(choices=["txt", "md", "doc"], value="txt", label="Format", visible=True, interactive=True)
+            updates[ui_components["download_selected_btn"]] = gr.Button(visible=True, interactive=True)
+            updates[ui_components["download_all_btn"]] = gr.Button(visible=True, interactive=True)
+            # Keep download triggers hidden, they are activated by button clicks
+            updates[ui_components["single_download_trigger"]] = gr.update(value=None, visible=False, interactive=False)
+            updates[ui_components["zip_download_trigger"]] = gr.update(value=None, visible=False, interactive=False)
+            updates[ui_components["result_group"]] = gr.update(visible=True) # Make result group visible
 
-            # Only show download buttons if there's at least one non-error result
-            has_successful_result = any(not res.startswith("Error:") for res in processed_results["text"].values())
-            if not has_successful_result:
-                # If no success, keep format selector and options text visible,
-                # but hide the actual download buttons and the trigger explanation.
-                final_dl_selected_btn_update = gr.Button(visible=False)
-                final_dl_all_btn_update = gr.Button(visible=False)
 
-        # Return the tuple matching outputs_process in interface.py
-        # Ensure the order matches the outputs_process list in interface.py
+        else:
+            # No results, keep things hidden/disabled
+            updates[ui_components["result_selector"]] = gr.Dropdown(choices=[], value=None, label="Select Processed File", visible=False, interactive=False)
+            updates[ui_components["md_output"]] = final_md_output # Show "No text extracted" or errors
+            updates[ui_components["image_output"]] = gr.update(value=None, visible=False)
+            updates[ui_components["download_group"]] = gr.update(visible=False) # Hide download group
+            updates[ui_components["download_options_md"]] = gr.update(visible=False)
+            updates[ui_components["download_format"]] = gr.Radio(visible=False, interactive=False)
+            updates[ui_components["download_selected_btn"]] = gr.Button(visible=False)
+            updates[ui_components["download_all_btn"]] = gr.Button(visible=False)
+            updates[ui_components["result_group"]] = gr.update(visible=True) # Still show result group, but it will be mostly empty/disabled
+
+
+        # The order MUST match the 'outputs_process' list in interface.py
         return (
-            final_result_group_update,     # result_group (NEW)
-            final_dropdown_update,           # result_selector
-            final_md_output,               # md_output
-            final_image_output_update,     # image_output
-            final_download_group_update,   # download_group
-            final_download_format_update,  # download_format
-            final_dl_selected_btn_update,  # download_selected_btn
-            final_dl_all_btn_update,       # download_all_btn
-            final_dl_options_md_update,    # download_options_md
-            gr.update(value=None, visible=False), # Reset single_download_trigger
-            gr.update(value=None, visible=False), # Reset zip_download_trigger
-            processed_results              # processed_results_state
+            updates[ui_components["result_group"]],
+            updates[ui_components["result_selector"]],
+            updates[ui_components["md_output"]],
+            updates[ui_components["image_output"]],
+            updates[ui_components["download_group"]],
+            updates[ui_components["download_format"]],
+            updates[ui_components["download_selected_btn"]],
+            updates[ui_components["download_all_btn"]],
+            updates[ui_components["download_options_md"]],
+            updates[ui_components["single_download_trigger"]],
+            updates[ui_components["zip_download_trigger"]],
+            processed_results,  # Return the full state
+            count_string # Use the correctly calculated count string
         )
 
 

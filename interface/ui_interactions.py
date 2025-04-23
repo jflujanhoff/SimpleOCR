@@ -3,6 +3,7 @@ import logging
 import openai
 import os
 from pathlib import Path # Needed for clear_ocr_fields
+from openai import OpenAI # Explicit import for client
 
 # Assuming Mistral client might be needed for validation if added later
 # from mistralai.client import MistralClient
@@ -10,6 +11,23 @@ from pathlib import Path # Needed for clear_ocr_fields
 # from .process_ocr import clear_output_directory # Keep if not passed
 
 logger = logging.getLogger(__name__)
+
+# Explanation prompt template
+# Use a standard string and explicitly add newlines
+EXPLANATION_PROMPT_TEMPLATE = ( # Wrap in parentheses for readability
+    "Act as an expert communicator skilled at simplifying complex information. "
+    "I will provide you with content from a file below. Your task is to:\n\n"
+    "1.  **Identify the Core Subject:** What is this file fundamentally about?\n"
+    "2.  **Extract Key Information:** What are the most crucial pieces of information, findings, or instructions?\n"
+    "3.  **Simplify the Language:** Rewrite these points using everyday words. Imagine you are explaining it to someone completely unfamiliar with this topic or field.\n"
+    "4.  **Explain Necessary Jargon:** If technical terms are unavoidable for accuracy, define them briefly in simple terms.\n"
+    "5.  **Summarize Concisely:** Provide a brief summary that captures the essence of the file's content.\n\n"
+    "Focus on clarity and accuracy, ensuring the main message is not lost.\n\n"
+    "**File Content:**\n"
+    "---\n"
+    "{file_content}\n"
+    "---"
+)
 
 class UIInteractions:
     """Handles UI interactions and state updates for the Gradio interface."""
@@ -326,6 +344,92 @@ class UIInteractions:
 
         logger.debug(f"Confirm clear returning tuple (length {len(output_values)}): {output_values}")
         return tuple(output_values)
+
+    # --- Explanation Generator --- #
+
+    def generate_explanation(self, current_results_state):
+        """Generates a summary/explanation of the processed text using an LLM."""
+        logger.info("Attempting to generate explanation...")
+
+        if not current_results_state or not current_results_state.get("text"):
+            logger.warning("No processed text found in state to explain.")
+            return (
+                "Processed Files: 0 | Total Pages: 0",
+                "No processed text available to explain. Please process documents first."
+            )
+
+        # 1. Calculate counts and combine text
+        file_count = len(current_results_state["text"])
+        total_page_count = 0
+        all_text_content = []
+        for filename, pages in current_results_state["text"].items():
+            if isinstance(pages, list): # Expecting list of strings per page
+                 total_page_count += len(pages)
+                 all_text_content.extend(pages) # Add all pages from this file
+            else:
+                 logger.warning(f"Unexpected data format for file '{filename}' text: {type(pages)}. Skipping for explanation.")
+                 # Fallback: maybe it's a single string? Try adding it.
+                 if isinstance(pages, str):
+                     all_text_content.append(pages)
+                     total_page_count += 1 # Assume 1 page if it's just a string
+
+        combined_text = "\\n\\n".join(all_text_content).strip() # Join pages with double newline
+        count_string = f"Processed Files: {file_count} | Total Pages: {total_page_count}"
+
+        if not combined_text:
+            logger.warning("Combined text is empty after processing state.")
+            return (
+                count_string,
+                "No text content found in the processed files to explain."
+            )
+
+        # 2. Check for OpenAI API key
+        openai_api_key = self.api_keys.get("OpenAI")
+        if not openai_api_key:
+            logger.warning("OpenAI API key not found.")
+            return (
+                count_string,
+                "Explanation requires an OpenAI API key. Please configure it in the 'API Keys' tab."
+            )
+
+        # 3. Call OpenAI API
+        try:
+            logger.info(f"Calling OpenAI API to explain text ({len(combined_text)} characters)...")
+            client = OpenAI(api_key=openai_api_key) # Use explicit import
+            prompt = EXPLANATION_PROMPT_TEMPLATE.format(file_content=combined_text)
+
+            # Consider chunking if combined_text is very large
+            # For now, assume it fits within typical context limits
+
+            chat_completion = client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+                model="gpt-4o-mini", # Or another suitable model like gpt-3.5-turbo
+            )
+
+            explanation = chat_completion.choices[0].message.content
+            logger.info("Successfully generated explanation from OpenAI.")
+            return (
+                count_string,
+                explanation.strip() # Return the count and the explanation
+            )
+
+        except openai.AuthenticationError:
+            logger.error("OpenAI API authentication failed. Please check your key.")
+            return (
+                count_string,
+                "Error: OpenAI API key is invalid. Please check it in the 'API Keys' tab."
+            )
+        except Exception as e:
+            logger.error(f"Error calling OpenAI API for explanation: {str(e)}", exc_info=True)
+            return (
+                count_string,
+                f"Error generating explanation: {str(e)}"
+            )
 
     # --- UI Update Function --- #
 
