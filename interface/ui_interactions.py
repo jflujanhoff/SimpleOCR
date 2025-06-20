@@ -1,9 +1,9 @@
 import gradio as gr
 import logging
-import openai
+# import openai # No longer needed for validation here
 import os
 from pathlib import Path # Needed for clear_ocr_fields
-from openai import OpenAI # Explicit import for client
+# from openai import OpenAI # No longer needed for validation here
 
 # Assuming Mistral client might be needed for validation if added later
 # from mistralai.client import MistralClient
@@ -37,101 +37,25 @@ class UIInteractions:
         Initializes the UIInteractions class with necessary dependencies.
 
         Args:
-            api_keys (dict): Dictionary to store API keys.
-            ocr_processor: Instance of the OCR processor class.
+            api_keys (dict): Dictionary to store API keys (reference passed, but not used directly here anymore).
+            ocr_processor: Instance of the OCR processor class (potentially used by other methods).
             ui_components (dict): Dictionary mapping names to Gradio components.
-            available_engines (list): List of currently available OCR engine names.
-            initialize_ocr_processor (callable): Function to re-initialize the OCR processor.
+            available_engines (list): List of currently available OCR engine names (used to update OCR engine dropdown).
+            initialize_ocr_processor (callable): Function to re-initialize the OCR processor (reference passed, but not used directly here anymore).
             # clear_output_directory (callable): Function to clear the output directory.
         """
-        self.api_keys = api_keys
+        self.api_keys = api_keys # Keep reference for potential future use, but direct use removed
         self.ocr_processor = ocr_processor
         self.ui_components = ui_components
-        self.available_engines = available_engines # Note: This might become stale if engines change after init
-        self.initialize_ocr_processor = initialize_ocr_processor
-        logger.info("UIInteractions initialized.")
+        self.available_engines = available_engines # Still needed
+        self.initialize_ocr_processor = initialize_ocr_processor # Keep reference
+        logger.info("UIInteractions initialized (API key methods removed).")
 
     # --- Helper Functions --- #
 
-    def _get_available_engines_markdown(self):
-        """Generates markdown text listing available engines and their status."""
-        # Base the markdown on the *currently available* engines list stored in self
-        lines = []
-        if "Tesseract" in self.available_engines:
-            lines.append("- Tesseract (✅ always available)")
-        else:
-            lines.append("- Tesseract (❌ failed to initialize)") # Should not happen unless Tesseract is disabled
-
-        easyocr_status = '✅ available' if 'EasyOCR' in self.available_engines else '❌ not available'
-        lines.append(f"- EasyOCR ({easyocr_status})")
-
-        mistral_status = '✅ available' if 'Mistral' in self.available_engines else '❌ not available'
-        lines.append(f"- Mistral ({mistral_status})")
-
-        openai_status = '✅ available' if 'OpenAI' in self.available_engines else '❌ not available'
-        lines.append(f"- OpenAI ({openai_status})")
-        return "\n".join(lines)
-
-    # --- API Key Handlers --- #
-
-    def save_api_key(self, api_key, engine):
-        """Validate and save API key, reinitialize, and return status message."""
-        if not api_key:
-            return f"❓ No API key provided for {engine}. Please enter a valid key."
-
-        logger.info(f"Attempting to save API key for {engine}")
-
-        try:
-            if engine == "OpenAI":
-                try:
-                    temp_client = openai.OpenAI(api_key=api_key)
-                    temp_client.models.list()
-                    logger.info(f"OpenAI API key validation successful for key ending in ...{api_key[-4:]}")
-                except openai.AuthenticationError:
-                    logger.warning(f"OpenAI API key validation failed (AuthenticationError) for key ending in ...{api_key[-4:]}")
-                    return f"❌ Invalid OpenAI API Key. Authentication failed."
-                except Exception as e:
-                    logger.error(f"OpenAI API key validation failed for key ending in ...{api_key[-4:]}: {e}")
-                    return f"❌ OpenAI key validation failed: {str(e)}"
-            # Add Mistral validation if needed here
-
-            logger.info(f"Saving API key for {engine}")
-            self.api_keys[engine] = api_key # Modify instance dictionary
-
-            self.initialize_ocr_processor() # Call instance method/passed function
-
-            success = engine in self.available_engines # Check instance list (may need refresh?)
-            if success:
-                 status_message = f"✅ {engine} API key saved and engine initialized."
-                 # Access processor via self
-                 if engine == "OpenAI" and self.ocr_processor and self.ocr_processor.available_openai_models:
-                      status_message += f" Model list loaded (e.g., {self.ocr_processor.available_openai_models[0]})."
-                 elif engine == "OpenAI":
-                      status_message += " Check logs for model loading details."
-                 return status_message
-            else:
-                # If initialization failed despite valid key (potentially), log and inform user
-                logger.error(f"{engine} key saved but engine failed to initialize. Check logs for details.")
-                # Should we clear the key here? Maybe not, let re-init try again.
-                # self.api_keys[engine] = "" # Clear the key? Reconsider this.
-                # self.initialize_ocr_processor() # Re-init after clearing?
-                return f"❌ Error: {engine} key saved, but engine failed post-initialization. Check logs."
-
-        except Exception as e:
-            logger.error(f"Error saving API key for {engine}: {str(e)}", exc_info=True)
-            return f"❌ Unexpected error processing API key for {engine}: {str(e)}"
-
-    def clear_api_key(self, engine):
-        """Clear the API key for the specified engine."""
-        if engine in self.api_keys:
-            self.api_keys[engine] = ""
-            self.initialize_ocr_processor() # Re-initialize after clearing
-            logger.info(f"API key for {engine} has been cleared")
-            return f"⚠️ {engine} API key has been cleared."
-        else:
-            # This case might indicate an engine that doesn't use keys or wasn't configured
-            logger.warning(f"Attempted to clear API key for unknown or keyless engine: {engine}")
-            return f"❓ Engine {engine} not found or doesn't use API keys."
+    # --- API Key Handlers REMOVED --- #
+    # def save_api_key(...): ...
+    # def clear_api_key(...): ...
 
     # --- OCR Tab UI Handlers --- #
 
@@ -431,84 +355,33 @@ class UIInteractions:
                 f"Error generating explanation: {str(e)}"
             )
 
-    # --- UI Update Function --- #
+    # --- General UI Update --- #
 
-    def update_all_ui_elements(self):
-        """Updates engine list, radio choices, statuses, and OpenAI model dropdown based on current state."""
-        # Important: Assumes self.available_engines and self.ocr_processor are up-to-date.
-        # If engine availability changes dynamically, these need to be refreshed before calling this.
-        logger.info(f"[update_all_ui_elements] Using available_engines: {self.available_engines}")
-        markdown_text = self._get_available_engines_markdown() # Updated call
+    def update_main_page_ui(self):
+        """Updates UI elements on the main OCR page based on the current engine availability.
 
-        default_engine_choice = "Tesseract" if "Tesseract" in self.available_engines else (self.available_engines[0] if self.available_engines else None)
+        Primarily updates the choices and value of the OCR engine selector.
+        """
+        # Refresh the available_engines list? No, rely on the list passed during init,
+        # which should be the live list from app.py updated by initialize_ocr_processor.
+        logger.debug(f"Updating main page UI. Current available engines: {self.available_engines}")
 
-        radio_update = gr.update(
-            choices=self.available_engines,
-            value=default_engine_choice,
-            label="OCR Engine",
-            interactive=bool(self.available_engines) # Disable if no engines
-        )
+        # Determine default and choices for OCR engine dropdown
+        choices = sorted(list(set(self.available_engines))) # Ensure unique and sorted
+        if not choices:
+            choices = ["Tesseract"] # Fallback if something went wrong
+            logger.warning("No available engines found! Defaulting OCR engine list to Tesseract.")
 
-        # Mistral Status
-        if "Mistral" in self.available_engines:
-            mistral_status_text = "✅ Mistral Engine Available."
-        elif self.api_keys.get("Mistral"): # Check if key exists even if engine failed
-             mistral_status_text = "❌ Mistral Engine Failed to Initialize. Check API Key/Logs."
+        # Try to keep the current value if possible and still available, else default to first
+        current_selection = self.ui_components["ocr_engine"].value # Get current UI value
+        if current_selection in choices:
+            value = current_selection
         else:
-             mistral_status_text = "ℹ️ Enter Mistral API Key to enable."
+            value = choices[0]
+            logger.info(f"Previous OCR engine '{current_selection}' not available. Defaulting to '{value}'.")
 
-        # OpenAI Status and Models
-        openai_models = []
-        openai_dropdown_visible = False
-        openai_default_model = None
-        openai_status_text = ""
+        ocr_engine_update = gr.update(choices=choices, value=value, interactive=bool(choices))
 
-        if "OpenAI" in self.available_engines:
-             if self.ocr_processor and self.ocr_processor.available_openai_models:
-                 openai_models = self.ocr_processor.available_openai_models
-                 openai_dropdown_visible = True
-                 # Try to keep current model if valid, else default
-                 # current_model = self.ui_components["openai_model_select"].value # Need a way to get current value
-                 # if current_model in openai_models:
-                 #    openai_default_model = current_model
-                 # else:
-                 openai_default_model = openai_models[0] if openai_models else None
-                 openai_status_text = f"✅ OpenAI Engine Available."
-             else:
-                 # Engine available but models failed to load
-                 openai_status_text = "⚠️ OpenAI Initialized, but failed to load models (Check Logs)."
-                 # Provide a default/fallback model if possible
-                 openai_models = ["gpt-4o"] # Example fallback
-                 openai_default_model = openai_models[0]
-                 openai_dropdown_visible = True # Still show dropdown with fallback
-        elif self.api_keys.get("OpenAI"): # Check if key exists even if engine failed
-            openai_status_text = "❌ OpenAI Engine Failed to Initialize. Check API Key/Logs."
-            openai_models = []
-            openai_default_model = None
-            openai_dropdown_visible = False
-        else:
-             openai_status_text = "ℹ️ Enter OpenAI API Key to enable."
-             openai_models = []
-             openai_default_model = None
-             openai_dropdown_visible = False
-
-
-        openai_model_dropdown_update = gr.update(
-            choices=openai_models,
-            value=openai_default_model,
-            visible=openai_dropdown_visible,
-            interactive=openai_dropdown_visible and bool(openai_models) # Interactive only if visible and has choices
-        )
-
-        # Return updates tuple matching Gradio outputs order in app.py
-        # Example order (MUST match app.py):
-        # [available_engines_text, ocr_engine_radio, mistral_status_md, openai_status_md, openai_model_select_dropdown]
-        return_tuple = (
-            markdown_text,
-            radio_update,
-            mistral_status_text,
-            openai_status_text,
-            openai_model_dropdown_update
-        )
-        logger.info(f"[update_all_ui_elements] Returning update tuple: {return_tuple}")
-        return return_tuple
+        # Return updates only for components on the main page
+        # The output signature MUST match the `outputs` list in the `.load()` call in interface.py
+        return ocr_engine_update # Only return the update for the ocr_engine component

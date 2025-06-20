@@ -10,6 +10,8 @@ import openai # Still needed for initialize_ocr_processor validation check? Mayb
 
 # Import the interface creator function
 from interface.interface import create_interface
+# Import the API keys page creator function
+from interface.api_keys_page import create_api_keys_page
 # Need DocumentOCR for type hinting or direct use if needed
 from ocr_processing import DocumentOCR
 # Import MAX_SIZE from variables
@@ -130,6 +132,22 @@ demo, ui_components = create_interface(
     available_engines=available_engines, # Pass the live list
     initialize_ocr_processor=initialize_ocr_processor
 )
+
+# --- Create API Keys Page --- #
+logger.info("Creating API Keys Page...")
+api_keys_page = create_api_keys_page(
+    api_keys=api_keys,
+    ocr_processor=ocr_processor,
+    available_engines=available_engines,
+    initialize_ocr_processor=initialize_ocr_processor
+)
+
+# --- Setup Routing for the API Keys Page --- #
+logger.info("Adding API Keys page route...")
+# The path argument (e.g., "/api-keys") defines the URL
+# The name argument ("API Keys") defines the text in the navbar
+with demo.route("API Keys", "/api-keys"):
+    api_keys_page.render() # Render the Blocks instance created earlier
 
 # --- Launch App --- (Remains here)
 if __name__ == "__main__":

@@ -44,6 +44,15 @@ def create_interface(
                                 label="OCR Engine",
                                 interactive=True
                             )
+                            # OpenAI Model Selection (visible only when OpenAI is selected)
+                            openai_model_select = gr.Dropdown(
+                                choices=["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"],
+                                value="gpt-4o",
+                                label="OpenAI Model",
+                                visible=False,
+                                interactive=True
+                            )
+                            
                             # Main action buttons
                         with gr.Row():
                             clear_btn = gr.Button("Clear", variant="secondary", scale=1)
@@ -110,53 +119,6 @@ def create_interface(
                         download_selected_btn = gr.Button("Download Selected", variant="secondary", scale=1, visible=False) # Initially hidden
                         download_all_btn = gr.Button("Download All (ZIP)", variant="secondary", scale=1, visible=False) # Initially hidden
 
-            # API Keys Tab
-            with gr.Tab("API Keys"):
-                gr.Markdown("### Configure OCR API Keys")
-                gr.Markdown("Enter your API keys for Mistral and OpenAI to enable their OCR engines. Keys are stored in memory only for the current session.")
-                gr.Markdown("⚠️ **Security Note**: API keys are stored in memory and are not persisted when the server restarts.")
-
-                with gr.Accordion("Mistral OCR", open=False):
-                    mistral_status = gr.Markdown(label="Status", value="")
-                    with gr.Column():
-                        with gr.Group():
-                            mistral_key = gr.Textbox(
-                                label="Mistral API Key",
-                                placeholder="Enter your Mistral API key...",
-                                type="password",
-                                value=""
-                            )
-                            with gr.Row():
-                                mistral_clear_btn = gr.Button("Clear Key", variant="stop")
-                                mistral_save_btn = gr.Button("Save Mistral API Key", variant="primary")
-
-                with gr.Accordion("OpenAI OCR", open=False):
-                    openai_status = gr.Markdown(label="Status", value="")
-                    with gr.Column():
-                        with gr.Group():
-                            openai_key = gr.Textbox(
-                                label="OpenAI API Key",
-                                placeholder="Enter your OpenAI API key...",
-                                type="password",
-                                value=""  # Don't display key values
-                            )
-                            # Add the model selection dropdown here
-                            openai_model_select = gr.Dropdown(
-                                label="Select OpenAI Model",
-                                choices=[], # Will be populated dynamically
-                                value=None,
-                                visible=False, # Initially hidden
-                                interactive=True
-                            )
-                            with gr.Row():
-                                openai_clear_btn = gr.Button("Clear Key", variant="stop")
-                                openai_save_btn = gr.Button("Save OpenAI API Key", variant="primary")
-
-                gr.Markdown("### Available OCR Engines")
-                gr.Markdown("The following OCR engines are currently available:")
-                # Update Markdown text using the helper function - will be populated by update_all_ui_elements
-                available_engines_text = gr.Markdown(value="Loading available engines...") # Initial placeholder
-
             # Placeholder Tabs
             with gr.Tab("Download"):
                 gr.Markdown("### Download Options")
@@ -184,6 +146,7 @@ def create_interface(
             "processed_results_state": processed_results_state,
             "file_input": file_input,
             "ocr_engine": ocr_engine,
+            "openai_model_select": openai_model_select,
             "process_btn": process_btn,
             "clear_btn": clear_btn,
             "clear_confirm_msg": clear_confirm_msg,
@@ -198,16 +161,6 @@ def create_interface(
             "download_all_btn": download_all_btn,
             "single_download_trigger": single_download_trigger,
             "zip_download_trigger": zip_download_trigger,
-            "mistral_status": mistral_status,
-            "mistral_key": mistral_key,
-            "mistral_save_btn": mistral_save_btn,
-            "mistral_clear_btn": mistral_clear_btn,
-            "openai_status": openai_status,
-            "openai_key": openai_key,
-            "openai_model_select": openai_model_select,
-            "openai_save_btn": openai_save_btn,
-            "openai_clear_btn": openai_clear_btn,
-            "available_engines_text": available_engines_text,
             "clear_confirmation_group": clear_confirmation_group,
             "download_group": download_group, # Add download group
             "result_group": result_group, # Add result group
@@ -267,6 +220,19 @@ def create_interface(
             outputs=outputs_process
         )
 
+        # Show/hide OpenAI model selector based on OCR engine selection
+        def toggle_openai_model_select(engine):
+            if engine == "OpenAI":
+                return gr.update(visible=True)
+            else:
+                return gr.update(visible=False)
+        
+        ocr_engine.change(
+            fn=toggle_openai_model_select,
+            inputs=[ocr_engine],
+            outputs=[openai_model_select]
+        )
+
         # Update display when dropdown selection changes
         result_selector.change(
             fn=ui_interactions.display_selected_result, # Use instance method
@@ -294,73 +260,13 @@ def create_interface(
             ]
         )
 
-        # API key save/clear buttons
-        # Define the common outputs for UI updates after key changes
-        update_ui_outputs = [
-            ui_components["available_engines_text"],
-            ui_components["ocr_engine"],
-            ui_components["mistral_status"],
-            ui_components["openai_status"],
-            ui_components["openai_model_select"]
-        ]
-
-        # Wrapper to call the instance method for UI updates
-        def run_update_all_ui_elements_wrapper():
-            logger.debug("Wrapper called: Running ui_interactions.update_all_ui_elements()")
-            # The ui_interactions instance holds references to api_keys, ocr_processor,
-            # available_engines which should be updated by initialize_ocr_processor
-            return ui_interactions.update_all_ui_elements()
-
-        # Mistral Save
-        mistral_save_btn.click(
-            fn=ui_interactions.save_api_key, # Use instance method
-            inputs=[mistral_key, gr.Textbox(value="Mistral", visible=False)], # Pass engine name
-            outputs=[mistral_status]
-        ).then(
-            fn=run_update_all_ui_elements_wrapper,
-            inputs=None,
-            outputs=update_ui_outputs
-        )
-
-        # Mistral Clear
-        mistral_clear_btn.click(
-            fn=ui_interactions.clear_api_key, # Use instance method
-            inputs=[gr.Textbox(value="Mistral", visible=False)], # Pass engine name
-            outputs=[mistral_status]
-        ).then(
-            fn=run_update_all_ui_elements_wrapper,
-            inputs=None,
-            outputs=update_ui_outputs
-        )
-
-        # OpenAI Save
-        openai_save_btn.click(
-            fn=ui_interactions.save_api_key, # Use instance method
-            inputs=[openai_key, gr.Textbox(value="OpenAI", visible=False)], # Pass engine name
-            outputs=[openai_status]
-        ).then(
-            fn=run_update_all_ui_elements_wrapper,
-            inputs=None,
-            outputs=update_ui_outputs
-        )
-
-        # OpenAI Clear
-        openai_clear_btn.click(
-            fn=ui_interactions.clear_api_key, # Use instance method
-            inputs=[gr.Textbox(value="OpenAI", visible=False)], # Pass engine name
-            outputs=[openai_status]
-        ).then(
-            fn=run_update_all_ui_elements_wrapper,
-            inputs=None,
-            outputs=update_ui_outputs
-        )
-
         # --- Clear Button Logic ---
         # Define the full list of outputs affected by clearing or showing confirmation
         clear_outputs_list = [
             # Components potentially cleared
             ui_components["file_input"],
             ui_components["ocr_engine"],
+            ui_components["openai_model_select"],
             ui_components["image_output"],
             ui_components["md_output"],
             ui_components["result_selector"],
@@ -423,9 +329,9 @@ def create_interface(
         # Update UI elements based on initial state on load
         # Needs to run after the UI is fully defined
         demo.load(
-             fn=run_update_all_ui_elements_wrapper, # Use the wrapper to call instance method
+             fn=ui_interactions.update_main_page_ui, # Call the simplified method directly
              inputs=None,
-             outputs=update_ui_outputs
+             outputs=[ui_components["ocr_engine"]] # Target only the ocr_engine component
         )
 
     # Return the demo object and the components dictionary
